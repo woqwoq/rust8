@@ -8,16 +8,26 @@ pub struct Processor {
     delay_timer: u8,          // 8bit Delay timer
     sound_timer: u8,          // 8bit Sound timer
     display: [bool; 64 * 32], // 64 * 32 Bool Display
+    keypad: [bool; 16],       // 16 value 1bit Keypad
 }
 
 pub enum RuntimeError {
     General,
 }
 
+pub enum Instruction {
+    ClearScreen,                          // 00E0
+    Jump(u16),                            // 1NNN
+    SetRegister { x: u8, nn: u8 },        // 6XNN
+    AddValueToRegister { x: u8, nn: u8 }, // 7XNN
+    SetMemoryPointer(u16),                // ANNN
+    Draw { x: u8, y: u8, n: u8 },         // DXYN
+}
+
 impl Processor {
     pub fn new() -> Self {
         Processor {
-            pc: 0,
+            pc: 512,
             stack: [0; 16],
             stack_pointer: 0,
             registers: [0; 16],
@@ -26,7 +36,20 @@ impl Processor {
             delay_timer: 0,
             sound_timer: 0,
             display: [false; 64 * 32],
+            keypad: [false; 16],
         }
+    }
+
+    pub fn fetch(&mut self) -> u16 {
+        todo!()
+    }
+
+    pub fn decode(&self, instruction: u16) -> Instruction {
+        todo!()
+    }
+
+    pub fn execute(&mut self, instruction: Instruction) -> Result<(), RuntimeError> {
+        todo!()
     }
 
     pub fn run(&mut self) -> Result<(), RuntimeError> {
