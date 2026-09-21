@@ -17,6 +17,7 @@ const FONT: [u8; 80] = [
     0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 ];
 const FONT_START_ADDRESS: u16 = 0x50;
+const ROM_START_ADDRESS: u16 = 0x200; // 512
 
 pub struct Processor {
     pc: u16,                  // Program counter
@@ -56,7 +57,7 @@ impl Processor {
         Self::load_font(&mut memory, FONT_START_ADDRESS, &FONT);
 
         Processor {
-            pc: 512,
+            pc: ROM_START_ADDRESS, // We initialize PC at 512, as that's where user programs live
             stack: [0; 16],
             stack_pointer: 0,
             registers: [0; 16],
@@ -69,8 +70,17 @@ impl Processor {
         }
     }
 
+    pub fn advance_pc(&mut self) {
+        self.pc += 2;
+    }
+
     pub fn fetch(&mut self) -> u16 {
-        todo!()
+        let upper = self.memory[(self.pc) as usize];
+        let lower = self.memory[(self.pc + 1) as usize];
+
+        self.advance_pc();
+
+        (upper as u16) << 8 | lower as u16
     }
 
     pub fn decode(&self, instruction: u16) -> Instruction {
@@ -83,5 +93,52 @@ impl Processor {
 
     pub fn run(&mut self) -> Result<(), RuntimeError> {
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod processor_tests {
+    use crate::processor::{Processor, ROM_START_ADDRESS};
+
+    fn load_in_ram(memory: &mut [u8; 4096], starting_addr: u16, data: Vec<u8>) {
+        for (offset, item) in data.iter().enumerate() {
+            memory[starting_addr as usize + offset] = *item;
+        }
+    }
+
+    fn inspect_ram_bytes(memory: &mut [u8; 4096], starting_addr: u16, ending_addr: u16) -> &[u8] {
+        &memory[starting_addr as usize..ending_addr as usize]
+    }
+
+    fn create_processor_with_ram_filled(data: Vec<u8>) -> Processor {
+        let mut proc = Processor::new();
+        load_in_ram(&mut proc.memory, ROM_START_ADDRESS, data.clone());
+
+        assert_eq!(
+            inspect_ram_bytes(
+                &mut proc.memory,
+                ROM_START_ADDRESS,
+                ROM_START_ADDRESS + data.len() as u16
+            ),
+            &data
+        );
+
+        proc
+    }
+
+    #[test]
+    fn fetch_works1() {
+        let program = vec![0x00, 0xE0, 0x6F, 0x12];
+        let mut proc = create_processor_with_ram_filled(program.clone());
+        assert_eq!(proc.fetch(), 0x00E0);
+        assert_eq!(proc.fetch(), 0x6F12);
+    }
+
+    #[test]
+    fn fetch_works2() {
+        let program = vec![];
+        let mut proc = create_processor_with_ram_filled(program.clone());
+
+        assert_eq!(proc.fetch(), 0x0000);
     }
 }
