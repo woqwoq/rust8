@@ -36,6 +36,8 @@ pub struct Processor {
 #[derive(Clone, Debug, PartialEq)]
 pub enum RuntimeError {
     General,
+    UnknownInstruction,
+    RegisterIndexOutOfRange(usize),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -89,6 +91,22 @@ impl Processor {
         self.pc += 2;
     }
 
+    fn get_register(&self, x: usize) -> Result<&u8, RuntimeError> {
+        if x >= 16 {
+            return Err(RuntimeError::RegisterIndexOutOfRange(x));
+        }
+
+        Ok(&self.registers[x])
+    }
+
+    fn get_register_mut(&mut self, x: usize) -> Result<&mut u8, RuntimeError> {
+        if x >= 16 {
+            return Err(RuntimeError::RegisterIndexOutOfRange(x));
+        }
+
+        Ok(&mut self.registers[x])
+    }
+
     pub fn fetch(&mut self) -> u16 {
         let upper = self.memory[(self.pc) as usize];
         let lower = self.memory[(self.pc + 1) as usize];
@@ -126,7 +144,41 @@ impl Processor {
     }
 
     pub fn execute(&mut self, instruction: Instruction) -> Result<(), RuntimeError> {
-        todo!()
+        match instruction {
+            Instruction::ClearScreen => self.instruction_clear_screen(),
+            Instruction::Jump(nnn) => self.instruction_jump(nnn),
+            Instruction::SetRegister { x, nn } => self.instruction_set_register(x, nn),
+            Instruction::AddValueToRegister { x, nn } => {
+                self.instruction_add_value_to_register(x, nn)
+            }
+            _ => Err(RuntimeError::UnknownInstruction),
+        }
+    }
+
+    pub fn instruction_clear_screen(&mut self) -> Result<(), RuntimeError> {
+        self.display.fill(false);
+        Ok(())
+    }
+
+    pub fn instruction_jump(&mut self, nnn: u16) -> Result<(), RuntimeError> {
+        self.pc = nnn;
+        Ok(())
+    }
+
+    pub fn instruction_set_register(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
+        *self.get_register_mut(x)? = nn;
+
+        Ok(())
+    }
+
+    pub fn instruction_add_value_to_register(
+        &mut self,
+        x: usize,
+        nn: u8,
+    ) -> Result<(), RuntimeError> {
+        *self.get_register_mut(x)? += nn;
+
+        Ok(())
     }
 
     pub fn step(&mut self) -> Result<(), RuntimeError> {
@@ -136,7 +188,7 @@ impl Processor {
 
 #[cfg(test)]
 mod processor_tests {
-    use crate::processor::{Instruction, Processor, ROM_START_ADDRESS};
+    use crate::processor::{Instruction, Processor, ROM_START_ADDRESS, RuntimeError};
 
     fn load_in_ram(memory: &mut [u8; 4096], starting_addr: u16, data: Vec<u8>) {
         for (offset, item) in data.iter().enumerate() {
@@ -196,5 +248,51 @@ mod processor_tests {
             Processor::decode(0x6F12),
             Instruction::SetRegister { x: 0xF, nn: 0x12 }
         );
+    }
+
+    #[test]
+    fn get_register() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        assert!(matches!(proc.get_register(1), Ok(0)));
+        assert!(matches!(proc.get_register_mut(15), Ok(0)));
+
+        assert!(matches!(
+            proc.get_register_mut(16),
+            Err(RuntimeError::RegisterIndexOutOfRange(16))
+        ));
+    }
+
+    #[test]
+    fn instruction_jump() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+        assert_eq!(proc.pc, ROM_START_ADDRESS);
+        for i in ROM_START_ADDRESS..=ROM_START_ADDRESS + 5 {
+            assert!(proc.instruction_jump(i).is_ok());
+            assert_eq!(proc.pc, i);
+        }
+    }
+
+    #[test]
+    fn instruction_set_register() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+        for i in 0..15 {
+            assert_eq!(*proc.get_register(i).unwrap(), 0);
+            assert!(proc.instruction_set_register(i, i as u8).is_ok());
+            assert_eq!(*proc.get_register(i).unwrap(), i as u8);
+        }
+    }
+
+    #[test]
+    fn instruction_add_value_to_register() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+        for i in 0..15 {
+            assert_eq!(*proc.get_register(i).unwrap(), 0);
+            assert!(proc.instruction_add_value_to_register(i, i as u8).is_ok());
+            assert_eq!(*proc.get_register(i).unwrap(), i as u8);
+        }
+
+        assert!(proc.instruction_add_value_to_register(1, 13).is_ok());
+        assert_eq!(*proc.get_register(1).unwrap(), 14);
     }
 }
