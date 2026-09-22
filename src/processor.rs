@@ -32,17 +32,20 @@ pub struct Processor {
     keypad: [bool; 16],       // 16 value 1bit Keypad
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum RuntimeError {
     General,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum Instruction {
-    ClearScreen,                          // 00E0
-    Jump(u16),                            // 1NNN
-    SetRegister { x: u8, nn: u8 },        // 6XNN
-    AddValueToRegister { x: u8, nn: u8 }, // 7XNN
-    SetMemoryPointer(u16),                // ANNN
-    Draw { x: u8, y: u8, n: u8 },         // DXYN
+    ClearScreen,                             // 00E0
+    Jump(u16),                               // 1NNN
+    SetRegister { x: usize, nn: u8 },        // 6XNN
+    AddValueToRegister { x: usize, nn: u8 }, // 7XNN
+    SetMemoryPointer(u16),                   // ANNN
+    Draw { x: usize, y: usize, n: u8 },      // DXYN
+    Undefined(u16),
 }
 
 impl Processor {
@@ -83,8 +86,31 @@ impl Processor {
         (upper as u16) << 8 | lower as u16
     }
 
-    pub fn decode(&self, instruction: u16) -> Instruction {
-        todo!()
+    pub fn decode(instruction: u16) -> Instruction {
+        let n = (instruction & 0x000F) as u8;
+        let nn = (instruction & 0x00FF) as u8;
+        let nnn = instruction & 0x0FFF;
+
+        let nibbles = (
+            ((instruction >> 12) & 0xF) as u8,
+            ((instruction >> 8) & 0xF) as u8,
+            ((instruction >> 4) & 0xF) as u8,
+            (instruction & 0xF) as u8,
+        );
+
+        match nibbles {
+            (0x0, 0x0, 0xE, 0x0) => Instruction::ClearScreen,
+            (0x1, _, _, _) => Instruction::Jump(nnn),
+            (0x6, x, _, _) => Instruction::SetRegister { x: x as usize, nn },
+            (0x7, x, _, _) => Instruction::AddValueToRegister { x: x as usize, nn },
+            (0xA, _, _, _) => Instruction::SetMemoryPointer(nnn),
+            (0xD, x, y, _) => Instruction::Draw {
+                x: x as usize,
+                y: y as usize,
+                n,
+            },
+            _ => Instruction::Undefined(instruction),
+        }
     }
 
     pub fn execute(&mut self, instruction: Instruction) -> Result<(), RuntimeError> {
@@ -98,7 +124,7 @@ impl Processor {
 
 #[cfg(test)]
 mod processor_tests {
-    use crate::processor::{Processor, ROM_START_ADDRESS};
+    use crate::processor::{Instruction, Processor, ROM_START_ADDRESS};
 
     fn load_in_ram(memory: &mut [u8; 4096], starting_addr: u16, data: Vec<u8>) {
         for (offset, item) in data.iter().enumerate() {
@@ -140,5 +166,23 @@ mod processor_tests {
         let mut proc = create_processor_with_ram_filled(program.clone());
 
         assert_eq!(proc.fetch(), 0x0000);
+    }
+
+    #[test]
+    fn decode_works() {
+        assert_eq!(Processor::decode(0x00E0), Instruction::ClearScreen);
+        assert_eq!(Processor::decode(0x1123), Instruction::Jump(0x123));
+        assert_eq!(
+            Processor::decode(0xD12F),
+            Instruction::Draw {
+                x: 0x1,
+                y: 0x2,
+                n: 0xF
+            }
+        );
+        assert_eq!(
+            Processor::decode(0x6F12),
+            Instruction::SetRegister { x: 0xF, nn: 0x12 }
+        );
     }
 }

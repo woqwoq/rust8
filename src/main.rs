@@ -1,5 +1,5 @@
 mod processor;
 
 fn main() {
-    println!("Hello, world!");
+    println!("{:x}", (0x6F12 & 0xF000) << 1);
 }
