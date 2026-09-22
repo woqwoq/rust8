@@ -75,6 +75,16 @@ impl Processor {
         }
     }
 
+    pub fn tick_timers(&mut self) {
+        if self.delay_timer > 0 {
+            self.delay_timer -= 1;
+        }
+
+        if self.sound_timer > 0 {
+            self.sound_timer -= 1;
+        }
+    }
+
     pub fn advance_pc(&mut self) {
         self.pc += 2;
     }

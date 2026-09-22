@@ -34,6 +34,8 @@ impl Emulator {
                 self.processor.step().map_err(EmulatorError::Processor)?;
             }
 
+            self.processor.tick_timers();
+
             if self.processor.is_dirty {
                 self.display
                     .draw_from_binary_buf(&self.processor.display)
