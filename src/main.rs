@@ -1,5 +1,9 @@
+use crate::display::Display;
+
+mod display;
 mod processor;
 
 fn main() {
-    println!("{:x}", (0x6F12 & 0xF000) << 1);
+    let mut display = Display::new();
+    let _ = display.draw_pixel(255, 3, 3);
 }
