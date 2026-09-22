@@ -20,16 +20,17 @@ const FONT_START_ADDRESS: u16 = 0x50;
 const ROM_START_ADDRESS: u16 = 0x200; // 512
 
 pub struct Processor {
-    pc: u16,                  // Program counter
-    stack: [u16; 16],         // Stack for 16 16bit addressess for subroutines/functions
-    stack_pointer: u8,        // 8bit stack pointer
-    registers: [u8; 16],      // 16 8bit registers: V0 - VF
-    memory: [u8; 4096],       // 4096B of RAM
-    memory_pointer: u16,      // 16bit index register used as a memory pointer
-    delay_timer: u8,          // 8bit Delay timer
-    sound_timer: u8,          // 8bit Sound timer
-    display: [bool; 64 * 32], // 64 * 32 Bool Display
-    keypad: [bool; 16],       // 16 value 1bit Keypad
+    pc: u16,                      // Program counter
+    stack: [u16; 16],             // Stack for 16 16bit addressess for subroutines/functions
+    stack_pointer: u8,            // 8bit stack pointer
+    registers: [u8; 16],          // 16 8bit registers: V0 - VF
+    memory: [u8; 4096],           // 4096B of RAM
+    memory_pointer: u16,          // 16bit index register used as a memory pointer
+    delay_timer: u8,              // 8bit Delay timer
+    sound_timer: u8,              // 8bit Sound timer
+    pub display: [bool; 64 * 32], // 64 * 32 Bool Display
+    keypad: [bool; 16],           // 16 value 1bit Keypad
+    pub is_dirty: bool,           // Decides whether or not to update the display
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -70,6 +71,7 @@ impl Processor {
             sound_timer: 0,
             display: [false; 64 * 32],
             keypad: [false; 16],
+            is_dirty: false,
         }
     }
 
@@ -117,7 +119,7 @@ impl Processor {
         todo!()
     }
 
-    pub fn run(&mut self) -> Result<(), RuntimeError> {
+    pub fn step(&mut self) -> Result<(), RuntimeError> {
         todo!()
     }
 }
