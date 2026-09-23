@@ -19,6 +19,9 @@ const FONT: [u8; 80] = [
 const FONT_START_ADDRESS: u16 = 0x50;
 const ROM_START_ADDRESS: u16 = 0x200; // 512
 
+const SCREEN_WIDTH: usize = 64;
+const SCREEN_HEIGHT: usize = 32;
+
 pub struct Processor {
     pc: u16,                      // Program counter
     stack: [u16; 16],             // Stack for 16 16bit addressess for subroutines/functions
@@ -107,6 +110,14 @@ impl Processor {
         Ok(&mut self.registers[x])
     }
 
+    fn read_memory(&mut self, start_address: u16, end_address: u16) -> Result<&[u8], RuntimeError> {
+        Ok(&self.memory[(start_address as usize)..(end_address as usize)])
+    }
+
+    fn get_display_mut(&mut self, x: usize, y: usize) -> &mut bool {
+        &mut self.display[x + 1 + y * SCREEN_WIDTH]
+    }
+
     pub fn fetch(&mut self) -> u16 {
         let upper = self.memory[(self.pc) as usize];
         let lower = self.memory[(self.pc + 1) as usize];
@@ -151,6 +162,8 @@ impl Processor {
             Instruction::AddValueToRegister { x, nn } => {
                 self.instruction_add_value_to_register(x, nn)
             }
+            Instruction::SetMemoryPointer(nnn) => self.instruction_set_memory_pointer(nnn),
+            Instruction::Draw { x, y, n } => self.instruction_draw(x, y, n),
             _ => Err(RuntimeError::UnknownInstruction),
         }
     }
@@ -177,6 +190,61 @@ impl Processor {
         nn: u8,
     ) -> Result<(), RuntimeError> {
         *self.get_register_mut(x)? += nn;
+
+        Ok(())
+    }
+
+    pub fn instruction_set_memory_pointer(&mut self, nnn: u16) -> Result<(), RuntimeError> {
+        self.memory_pointer = nnn;
+
+        Ok(())
+    }
+
+    // Screen:
+    // [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    //  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    //  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    //  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    //  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    //  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    //  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    //  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    //
+    // Sprite:
+    // 1111
+    // 1001
+    // 1001
+    // 1111
+    // 1111 1001 1001 1111
+    //
+    // Coords:
+    // x: 2,
+    // y: 3
+    // xl: 2 + 3*width = 2 + 1 + 3*16 = 51
+    pub fn instruction_draw(&mut self, x: usize, y: usize, n: u8) -> Result<(), RuntimeError> {
+        *self.get_register_mut(0xF)? = 0;
+
+        let start_coord = x + 1 + y * SCREEN_WIDTH;
+
+        for row in 0..n {
+            let sprite_byte = self.read_memory(
+                self.memory_pointer + (row as u16),
+                self.memory_pointer + (row as u16) + 1,
+            )?[0];
+
+            for col in 0..8 {
+                let display_bit = self.get_display_mut(x + col, y + (row as usize));
+                let bit = (sprite_byte >> (7 - col as u8) & 1) == 1;
+
+                *display_bit ^= bit;
+
+                if *display_bit {
+                    *self.get_register_mut(0xF)? = 1;
+                }
+            }
+        }
+
+        self.is_dirty = true;
 
         Ok(())
     }
