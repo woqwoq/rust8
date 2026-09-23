@@ -213,20 +213,27 @@ impl Processor {
     }
 
     pub fn instruction_draw(&mut self, x: usize, y: usize, n: u8) -> Result<(), RuntimeError> {
-        *self.get_register_mut(0xF)? = 0;
+        *self.get_register_mut(0xF)? = 0; // Reset collision register
 
+        // Wrap for initial coordinates
         let vx = *self.get_register(x)? as usize % SCREEN_WIDTH;
         let vy = *self.get_register(y)? as usize % SCREEN_HEIGHT;
 
         for row in 0..n {
+            // Load first byte (row) of a sprite (e.g **** | 11110000 | 0xF0)
             let sprite_byte = self.read_memory_byte(self.memory_pointer + (row as u16))?;
 
             for col in 0..8 {
+                // If we are inside of the range of the current screen, we render XOR of current
+                // sprite bit and current displayed bit
                 if let Some(display_bit) = self.get_display_mut(vx + col, vy + row as usize) {
+                    // Extract col-th bit from our sprite's byte (row)
                     let bit = (sprite_byte >> (7 - col as u8) & 1) == 1;
 
+                    // If current display bit changes to 0, we mark a collision
                     let collision = *display_bit && bit;
 
+                    // current display bit XOR current sprite bit
                     *display_bit ^= bit;
 
                     if collision {
@@ -368,9 +375,24 @@ mod processor_tests {
         proc.memory_pointer = FONT_START_ADDRESS;
 
         assert!(proc.instruction_draw(0, 0, 5).is_ok());
+
         assert!(proc.display[0]);
-        assert!(proc.display[0]);
-        assert!(proc.display[0]);
-        assert!(proc.display[0]);
+        assert!(proc.display[1]);
+        assert!(proc.display[2]);
+        assert!(proc.display[3]);
+
+        assert!(proc.display.iter().filter(|p| **p).count() == 14);
+    }
+
+    #[test]
+    fn instruction_display_double_draw_removes_sprite() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+        proc.memory_pointer = FONT_START_ADDRESS;
+
+        assert!(proc.instruction_draw(0, 0, 5).is_ok());
+        assert!(proc.display.iter().filter(|p| **p).count() != 0);
+
+        assert!(proc.instruction_draw(0, 0, 5).is_ok());
+        assert!(proc.display.iter().filter(|p| **p).count() == 0);
     }
 }
