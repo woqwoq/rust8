@@ -110,12 +110,24 @@ impl Processor {
         Ok(&mut self.registers[x])
     }
 
-    fn read_memory(&mut self, start_address: u16, end_address: u16) -> Result<&[u8], RuntimeError> {
+    fn read_memory_range(
+        &mut self,
+        start_address: u16,
+        end_address: u16,
+    ) -> Result<&[u8], RuntimeError> {
         Ok(&self.memory[(start_address as usize)..(end_address as usize)])
     }
 
-    fn get_display_mut(&mut self, x: usize, y: usize) -> &mut bool {
-        &mut self.display[x + 1 + y * SCREEN_WIDTH]
+    fn read_memory_byte(&mut self, address: u16) -> Result<u8, RuntimeError> {
+        Ok(self.memory[address as usize])
+    }
+
+    fn get_display_mut(&mut self, x: usize, y: usize) -> Option<&mut bool> {
+        if x >= SCREEN_WIDTH || y >= SCREEN_HEIGHT {
+            return None;
+        }
+
+        Some(&mut self.display[x + y * SCREEN_WIDTH])
     }
 
     pub fn fetch(&mut self) -> u16 {
@@ -189,7 +201,7 @@ impl Processor {
         x: usize,
         nn: u8,
     ) -> Result<(), RuntimeError> {
-        *self.get_register_mut(x)? += nn;
+        *self.get_register_mut(x)? = self.get_register(x)?.wrapping_add(nn);
 
         Ok(())
     }
@@ -200,46 +212,26 @@ impl Processor {
         Ok(())
     }
 
-    // Screen:
-    // [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    //  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    //  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    //  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    //  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    //  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    //  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    //  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    //
-    // Sprite:
-    // 1111
-    // 1001
-    // 1001
-    // 1111
-    // 1111 1001 1001 1111
-    //
-    // Coords:
-    // x: 2,
-    // y: 3
-    // xl: 2 + 3*width = 2 + 1 + 3*16 = 51
     pub fn instruction_draw(&mut self, x: usize, y: usize, n: u8) -> Result<(), RuntimeError> {
         *self.get_register_mut(0xF)? = 0;
 
-        let start_coord = x + 1 + y * SCREEN_WIDTH;
+        let vx = *self.get_register(x)? as usize % SCREEN_WIDTH;
+        let vy = *self.get_register(y)? as usize % SCREEN_HEIGHT;
 
         for row in 0..n {
-            let sprite_byte = self.read_memory(
-                self.memory_pointer + (row as u16),
-                self.memory_pointer + (row as u16) + 1,
-            )?[0];
+            let sprite_byte = self.read_memory_byte(self.memory_pointer + (row as u16))?;
 
             for col in 0..8 {
-                let display_bit = self.get_display_mut(x + col, y + (row as usize));
-                let bit = (sprite_byte >> (7 - col as u8) & 1) == 1;
+                if let Some(display_bit) = self.get_display_mut(vx + col, vy + row as usize) {
+                    let bit = (sprite_byte >> (7 - col as u8) & 1) == 1;
 
-                *display_bit ^= bit;
+                    let collision = *display_bit && bit;
 
-                if *display_bit {
-                    *self.get_register_mut(0xF)? = 1;
+                    *display_bit ^= bit;
+
+                    if collision {
+                        *self.get_register_mut(0xF)? = 1;
+                    }
                 }
             }
         }
@@ -256,7 +248,9 @@ impl Processor {
 
 #[cfg(test)]
 mod processor_tests {
-    use crate::processor::{Instruction, Processor, ROM_START_ADDRESS, RuntimeError};
+    use crate::processor::{
+        FONT_START_ADDRESS, Instruction, Processor, ROM_START_ADDRESS, RuntimeError,
+    };
 
     fn load_in_ram(memory: &mut [u8; 4096], starting_addr: u16, data: Vec<u8>) {
         for (offset, item) in data.iter().enumerate() {
@@ -362,5 +356,21 @@ mod processor_tests {
 
         assert!(proc.instruction_add_value_to_register(1, 13).is_ok());
         assert_eq!(*proc.get_register(1).unwrap(), 14);
+
+        assert!(proc.instruction_add_value_to_register(0, 255).is_ok());
+        assert!(proc.instruction_add_value_to_register(0, 1).is_ok());
+        assert_eq!(*proc.get_register(0).unwrap(), 0);
+    }
+
+    #[test]
+    fn instruction_display() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+        proc.memory_pointer = FONT_START_ADDRESS;
+
+        assert!(proc.instruction_draw(0, 0, 5).is_ok());
+        assert!(proc.display[0]);
+        assert!(proc.display[0]);
+        assert!(proc.display[0]);
+        assert!(proc.display[0]);
     }
 }
