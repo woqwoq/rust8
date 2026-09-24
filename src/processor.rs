@@ -38,9 +38,9 @@ pub struct Processor {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum RuntimeError {
-    General,
     UnknownInstruction,
     RegisterIndexOutOfRange(usize),
+    MemoryIndexOutOfRange(usize),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -78,6 +78,21 @@ impl Processor {
             keypad: [false; 16],
             is_dirty: false,
         }
+    }
+
+    fn load_in_ram(&mut self, starting_addr: u16, data: Vec<u8>) -> Result<(), RuntimeError> {
+        for (offset, item) in data.iter().enumerate() {
+            let memory_index = starting_addr as usize + offset;
+            if memory_index >= self.memory.len() {
+                return Err(RuntimeError::MemoryIndexOutOfRange(memory_index));
+            }
+            self.memory[starting_addr as usize + offset] = *item;
+        }
+        Ok(())
+    }
+
+    pub fn load_rom(&mut self, data: Vec<u8>) -> Result<(), RuntimeError> {
+        self.load_in_ram(ROM_START_ADDRESS, data)
     }
 
     pub fn tick_timers(&mut self) {
@@ -249,7 +264,9 @@ impl Processor {
     }
 
     pub fn step(&mut self) -> Result<(), RuntimeError> {
-        todo!()
+        let opcode = self.fetch();
+        let instruction = Self::decode(opcode);
+        self.execute(instruction)
     }
 }
 
@@ -391,8 +408,25 @@ mod processor_tests {
 
         assert!(proc.instruction_draw(0, 0, 5).is_ok());
         assert!(proc.display.iter().filter(|p| **p).count() != 0);
+        assert_eq!(*proc.get_register(0xF).unwrap(), 0);
 
         assert!(proc.instruction_draw(0, 0, 5).is_ok());
         assert!(proc.display.iter().filter(|p| **p).count() == 0);
+        assert_eq!(*proc.get_register(0xF).unwrap(), 1);
+    }
+
+    #[test]
+    fn instruction_display_wraps_and_gets_clipped_when_out_of_range() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+        proc.memory_pointer = FONT_START_ADDRESS;
+
+        // Should wrap to (63, 31) because of modulo
+        *proc.get_register_mut(0x0).unwrap() = 64 + 63;
+        *proc.get_register_mut(0x1).unwrap() = 32 + 31;
+
+        assert!(proc.instruction_draw(0x0, 0x1, 5).is_ok());
+
+        // Only a single bottom right pixel should get drawn
+        assert!(proc.display.iter().filter(|p| **p).count() == 1);
     }
 }
