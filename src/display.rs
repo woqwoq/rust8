@@ -8,6 +8,7 @@ pub struct Display {
     window: Window,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum DisplayError {
     DrawPixelOutOfRange { x: usize, y: usize },
     UpdateFrameBuffer,
@@ -51,6 +52,10 @@ impl Display {
         self.buffer[x + y * self.width] = value;
 
         Ok(())
+    }
+
+    pub fn is_key_down(&self, key: Key) -> Result<bool, DisplayError> {
+        Ok(self.window.is_key_down(key))
     }
 
     pub fn draw_from_binary_buf(&mut self, buf: &[bool]) -> Result<(), DisplayError> {
