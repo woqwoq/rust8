@@ -3,15 +3,10 @@ use std::{fs::File, io::Read, path::PathBuf};
 use minifb::Key;
 
 use crate::{
+    constants::{CPU_CLOCK_SPEED_HZ, SCREEN_FPS, SCREEN_HEIGHT, SCREEN_WIDTH},
     display::{Display, DisplayError},
     processor::{Processor, RuntimeError},
 };
-const SCREEN_WIDTH: usize = 64;
-const SCREEN_HEIGHT: usize = 32;
-
-const SCREEN_FPS: usize = 60;
-const CPU_CLOCK_SPEED_HZ: usize = 600;
-
 pub struct Emulator {
     processor: Processor,
     display: Display,
@@ -24,21 +19,30 @@ pub enum EmulatorError {
     RomOpen,
 }
 
+impl From<RuntimeError> for EmulatorError {
+    fn from(value: RuntimeError) -> Self {
+        EmulatorError::Processor(value)
+    }
+}
+
+impl From<DisplayError> for EmulatorError {
+    fn from(value: DisplayError) -> Self {
+        EmulatorError::Display(value)
+    }
+}
+
 impl Emulator {
     pub fn new() -> Self {
         Emulator {
             processor: Processor::new(),
-            display: Display::new(SCREEN_WIDTH, SCREEN_HEIGHT),
+            display: Display::new(),
         }
     }
 
     pub fn from_rom_file(path: PathBuf) -> Result<Self, EmulatorError> {
         let mut emu = Self::new();
         match std::fs::read(path) {
-            Ok(rom) => emu
-                .processor
-                .load_rom(rom)
-                .map_err(EmulatorError::Processor)?,
+            Ok(rom) => emu.processor.load_rom(rom)?,
             Err(_) => return Err(EmulatorError::RomOpen),
         }
 
@@ -47,15 +51,10 @@ impl Emulator {
 
     pub fn run(&mut self) -> Result<(), EmulatorError> {
         // 60 FPS Loop for screen updates
-        while self.display.is_open()
-            && !self
-                .display
-                .is_key_down(Key::Escape)
-                .map_err(EmulatorError::Display)?
-        {
+        while self.display.is_open() && !self.display.is_key_down(Key::Escape)? {
             // 600 FPS Loop to emulate 600hz CPU execution speed
             for _ in 0..(CPU_CLOCK_SPEED_HZ / SCREEN_FPS) {
-                self.processor.step().map_err(EmulatorError::Processor)?;
+                self.processor.step()?;
             }
 
             // Tick timer at 60hz/FPS
@@ -63,15 +62,13 @@ impl Emulator {
 
             // Redraw only when pixels are dirty
             if self.processor.is_dirty {
-                self.display
-                    .draw_from_binary_buf(&self.processor.display)
-                    .map_err(EmulatorError::Display)?;
+                self.display.draw_from_binary_buf(&self.processor.display)?;
 
                 self.processor.is_dirty = false;
             }
 
             // Refresh anyway capture key events
-            self.display.update().map_err(EmulatorError::Display)?;
+            self.display.update()?;
         }
 
         Ok(())

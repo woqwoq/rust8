@@ -1,39 +1,17 @@
-const FONT: [u8; 80] = [
-    0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
-    0x20, 0x60, 0x20, 0x20, 0x70, // 1
-    0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
-    0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
-    0x90, 0x90, 0xF0, 0x10, 0x10, // 4
-    0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
-    0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
-    0xF0, 0x10, 0x20, 0x40, 0x40, // 7
-    0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
-    0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
-    0xF0, 0x90, 0xF0, 0x90, 0x90, // A
-    0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
-    0xF0, 0x80, 0x80, 0x80, 0xF0, // C
-    0xE0, 0x90, 0x90, 0x90, 0xE0, // D
-    0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
-    0xF0, 0x80, 0xF0, 0x80, 0x80, // F
-];
-const FONT_START_ADDRESS: u16 = 0x50;
-const ROM_START_ADDRESS: u16 = 0x200; // 512
-
-const SCREEN_WIDTH: usize = 64;
-const SCREEN_HEIGHT: usize = 32;
+use crate::constants::{FONT, FONT_START_ADDRESS, ROM_START_ADDRESS, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 pub struct Processor {
-    pc: u16,                      // Program counter
-    stack: [u16; 16],             // Stack for 16 16bit addressess for subroutines/functions
-    stack_pointer: u8,            // 8bit stack pointer
-    registers: [u8; 16],          // 16 8bit registers: V0 - VF
-    memory: [u8; 4096],           // 4096B of RAM
-    memory_pointer: u16,          // 16bit index register used as a memory pointer
-    delay_timer: u8,              // 8bit Delay timer
-    sound_timer: u8,              // 8bit Sound timer
-    pub display: [bool; 64 * 32], // 64 * 32 Bool Display
-    keypad: [bool; 16],           // 16 value 1bit Keypad
-    pub is_dirty: bool,           // Decides whether or not to update the display
+    pc: u16,                                           // Program counter
+    stack: [u16; 16],    // Stack for 16 16bit addressess for subroutines/functions
+    stack_pointer: u8,   // 8bit stack pointer
+    registers: [u8; 16], // 16 8bit registers: V0 - VF
+    memory: [u8; 4096],  // 4096B of RAM
+    memory_pointer: u16, // 16bit index register used as a memory pointer
+    delay_timer: u8,     // 8bit Delay timer
+    sound_timer: u8,     // 8bit Sound timer
+    pub display: [bool; SCREEN_WIDTH * SCREEN_HEIGHT], // 64 * 32 Bool Display
+    keypad: [bool; 16],  // 16 value 1bit Keypad
+    pub is_dirty: bool,  // Decides whether or not to update the display
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -74,7 +52,7 @@ impl Processor {
             memory_pointer: 0,
             delay_timer: 0,
             sound_timer: 0,
-            display: [false; 64 * 32],
+            display: [false; SCREEN_WIDTH * SCREEN_HEIGHT],
             keypad: [false; 16],
             is_dirty: false,
         }
@@ -272,8 +250,9 @@ impl Processor {
 
 #[cfg(test)]
 mod processor_tests {
-    use crate::processor::{
-        FONT_START_ADDRESS, Instruction, Processor, ROM_START_ADDRESS, RuntimeError,
+    use crate::{
+        constants::{SCREEN_HEIGHT, SCREEN_WIDTH},
+        processor::{FONT_START_ADDRESS, Instruction, Processor, ROM_START_ADDRESS, RuntimeError},
     };
 
     fn load_in_ram(memory: &mut [u8; 4096], starting_addr: u16, data: Vec<u8>) {
@@ -421,8 +400,8 @@ mod processor_tests {
         proc.memory_pointer = FONT_START_ADDRESS;
 
         // Should wrap to (63, 31) because of modulo
-        *proc.get_register_mut(0x0).unwrap() = 64 + 63;
-        *proc.get_register_mut(0x1).unwrap() = 32 + 31;
+        *proc.get_register_mut(0x0).unwrap() = (SCREEN_WIDTH + SCREEN_WIDTH - 1) as u8;
+        *proc.get_register_mut(0x1).unwrap() = (SCREEN_HEIGHT + SCREEN_HEIGHT - 1) as u8;
 
         assert!(proc.instruction_draw(0x0, 0x1, 5).is_ok());
 

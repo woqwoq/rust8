@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use crate::emulator::Emulator;
 
+mod constants;
 mod display;
 mod emulator;
 mod processor;
