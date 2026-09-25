@@ -19,12 +19,15 @@ pub enum RuntimeError {
     UnknownInstruction,
     RegisterIndexOutOfRange(usize),
     MemoryIndexOutOfRange(usize),
+    StackOverflow(usize),
+    StackUnderflow(usize),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Instruction {
     ClearScreen,                             // 00E0
     Jump(u16),                               // 1NNN
+    JumpSubroutine(u16),                     // 2NNN
     SetRegister { x: usize, nn: u8 },        // 6XNN
     AddValueToRegister { x: usize, nn: u8 }, // 7XNN
     SetMemoryPointer(u16),                   // ANNN
@@ -103,6 +106,26 @@ impl Processor {
         Ok(&mut self.registers[x])
     }
 
+    fn push_to_stack(&mut self, x: u16) -> Result<(), RuntimeError> {
+        if self.stack_pointer as usize >= self.stack.len() {
+            return Err(RuntimeError::StackOverflow(self.pc as usize));
+        }
+
+        self.stack[self.stack_pointer as usize] = x;
+        self.stack_pointer += 1;
+
+        Ok(())
+    }
+
+    fn pop_from_stack(&mut self) -> Result<u16, RuntimeError> {
+        if self.stack_pointer == 0 || self.stack.is_empty() {
+            return Err(RuntimeError::StackUnderflow(self.pc as usize));
+        }
+
+        self.stack_pointer -= 1;
+        Ok(self.stack[self.stack_pointer as usize])
+    }
+
     fn read_memory_range(
         &mut self,
         start_address: u16,
@@ -145,12 +168,14 @@ impl Processor {
         );
 
         match nibbles {
-            (0x0, 0x0, 0xE, 0x0) => Instruction::ClearScreen,
-            (0x1, _, _, _) => Instruction::Jump(nnn),
-            (0x6, x, _, _) => Instruction::SetRegister { x: x as usize, nn },
-            (0x7, x, _, _) => Instruction::AddValueToRegister { x: x as usize, nn },
-            (0xA, _, _, _) => Instruction::SetMemoryPointer(nnn),
+            (0x0, 0x0, 0xE, 0x0) => Instruction::ClearScreen, // 00E0
+            (0x1, _, _, _) => Instruction::Jump(nnn),         // 1NNN
+            (0x2, _, _, _) => Instruction::JumpSubroutine(nnn), // 2NNN
+            (0x6, x, _, _) => Instruction::SetRegister { x: x as usize, nn }, // 6XNN
+            (0x7, x, _, _) => Instruction::AddValueToRegister { x: x as usize, nn }, // 7XNN
+            (0xA, _, _, _) => Instruction::SetMemoryPointer(nnn), //ANNN
             (0xD, x, y, _) => Instruction::Draw {
+                // DXYN
                 x: x as usize,
                 y: y as usize,
                 n,
@@ -179,6 +204,12 @@ impl Processor {
     }
 
     pub fn instruction_jump(&mut self, nnn: u16) -> Result<(), RuntimeError> {
+        self.pc = nnn;
+        Ok(())
+    }
+
+    pub fn instruction_jump_subroutine(&mut self, nnn: u16) -> Result<(), RuntimeError> {
+        self.push_to_stack(self.pc)?;
         self.pc = nnn;
         Ok(())
     }
@@ -407,5 +438,55 @@ mod processor_tests {
 
         // Only a single bottom right pixel should get drawn
         assert!(proc.display.iter().filter(|p| **p).count() == 1);
+    }
+
+    #[test]
+    fn stack_push_ok() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        for i in 0..16 {
+            assert!(proc.push_to_stack(i).is_ok());
+        }
+
+        for i in (0..16).rev() {
+            println!("{:?}", proc.stack);
+            assert_eq!(proc.pop_from_stack().unwrap(), i);
+        }
+    }
+
+    #[test]
+    fn stack_push_err_stack_overflow() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        for i in 0..16 {
+            assert!(proc.push_to_stack(i).is_ok());
+        }
+
+        assert!(matches!(
+            proc.push_to_stack(16),
+            Err(RuntimeError::StackOverflow(512))
+        ));
+    }
+
+    #[test]
+    fn stack_push_err_stack_underflow() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        assert!(matches!(
+            proc.pop_from_stack(),
+            Err(RuntimeError::StackUnderflow(512))
+        ));
+    }
+
+    #[test]
+    fn instruction_jump_subroutine() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        // 512 -> 560 -> 580
+        assert!(proc.instruction_jump_subroutine(560).is_ok());
+        assert!(proc.instruction_jump_subroutine(580).is_ok());
+        assert!(proc.stack_pointer == 2);
+        assert_eq!(proc.pop_from_stack().unwrap(), 560);
+        assert_eq!(proc.pop_from_stack().unwrap(), 512);
     }
 }
