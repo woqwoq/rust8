@@ -26,6 +26,7 @@ pub enum RuntimeError {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Instruction {
     ClearScreen,                             // 00E0
+    ReturnFromSubroutine,                    // 00EE
     Jump(u16),                               // 1NNN
     JumpSubroutine(u16),                     // 2NNN
     SetRegister { x: usize, nn: u8 },        // 6XNN
@@ -169,6 +170,7 @@ impl Processor {
 
         match nibbles {
             (0x0, 0x0, 0xE, 0x0) => Instruction::ClearScreen, // 00E0
+            (0x0, 0x0, 0xE, 0xE) => Instruction::ReturnFromSubroutine, // 00EE
             (0x1, _, _, _) => Instruction::Jump(nnn),         // 1NNN
             (0x2, _, _, _) => Instruction::JumpSubroutine(nnn), // 2NNN
             (0x6, x, _, _) => Instruction::SetRegister { x: x as usize, nn }, // 6XNN
@@ -187,6 +189,7 @@ impl Processor {
     pub fn execute(&mut self, instruction: Instruction) -> Result<(), RuntimeError> {
         match instruction {
             Instruction::ClearScreen => self.instruction_clear_screen(),
+            Instruction::ReturnFromSubroutine => self.instruction_return_from_subroutine(),
             Instruction::Jump(nnn) => self.instruction_jump(nnn),
             Instruction::SetRegister { x, nn } => self.instruction_set_register(x, nn),
             Instruction::AddValueToRegister { x, nn } => {
@@ -200,6 +203,11 @@ impl Processor {
 
     pub fn instruction_clear_screen(&mut self) -> Result<(), RuntimeError> {
         self.display.fill(false);
+        Ok(())
+    }
+
+    pub fn instruction_return_from_subroutine(&mut self) -> Result<(), RuntimeError> {
+        self.pc = self.pop_from_stack()?;
         Ok(())
     }
 
@@ -479,7 +487,7 @@ mod processor_tests {
     }
 
     #[test]
-    fn instruction_jump_subroutine() {
+    fn instruction_jump_subroutine_ok() {
         let mut proc = create_processor_with_ram_filled(vec![]);
 
         // 512 -> 560 -> 580
@@ -488,5 +496,42 @@ mod processor_tests {
         assert!(proc.stack_pointer == 2);
         assert_eq!(proc.pop_from_stack().unwrap(), 560);
         assert_eq!(proc.pop_from_stack().unwrap(), 512);
+    }
+
+    #[test]
+    fn instruction_jump_subroutine_err_ovf() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        for i in 512..528 {
+            assert!(proc.instruction_jump_subroutine(i).is_ok());
+        }
+        assert!(matches!(
+            proc.instruction_jump_subroutine(528),
+            Err(RuntimeError::StackOverflow(527))
+        ));
+    }
+
+    #[test]
+    fn instruction_return_from_subroutine_ok() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        // 512 -> 560 -> 580
+        assert!(proc.instruction_jump_subroutine(560).is_ok());
+        assert!(proc.instruction_jump_subroutine(580).is_ok());
+
+        assert!(proc.instruction_return_from_subroutine().is_ok());
+        assert_eq!(proc.pc, 560);
+        assert!(proc.instruction_return_from_subroutine().is_ok());
+        assert_eq!(proc.pc, 512);
+    }
+
+    #[test]
+    fn instruction_return_from_subroutine_err_udf() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        assert!(matches!(
+            proc.instruction_return_from_subroutine(),
+            Err(RuntimeError::StackUnderflow(512))
+        ));
     }
 }
