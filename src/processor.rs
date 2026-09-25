@@ -10,7 +10,7 @@ pub struct Processor {
     delay_timer: u8,     // 8bit Delay timer
     sound_timer: u8,     // 8bit Sound timer
     pub display: [bool; SCREEN_WIDTH * SCREEN_HEIGHT], // 64 * 32 Bool Display
-    keypad: [bool; 16],  // 16 value 1bit Keypad
+    pub keypad: [bool; 16], // 16 value 1bit Keypad
     pub is_dirty: bool,  // Decides whether or not to update the display
 }
 

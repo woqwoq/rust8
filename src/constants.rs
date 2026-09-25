@@ -1,3 +1,5 @@
+use minifb::Key;
+
 pub const FONT: [u8; 80] = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
     0x20, 0x60, 0x20, 0x20, 0x70, // 1
@@ -24,3 +26,22 @@ pub const SCREEN_HEIGHT: usize = 32;
 
 pub const SCREEN_FPS: usize = 60;
 pub const CPU_CLOCK_SPEED_HZ: usize = 600;
+
+pub const KEYPAD_TRACKED_KEYS: [Key; 16] = [
+    Key::Key1,
+    Key::Key2,
+    Key::Key3,
+    Key::Key4,
+    Key::Q,
+    Key::W,
+    Key::E,
+    Key::R,
+    Key::A,
+    Key::S,
+    Key::D,
+    Key::F,
+    Key::Z,
+    Key::X,
+    Key::C,
+    Key::V,
+];

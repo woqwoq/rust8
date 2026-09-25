@@ -1,6 +1,6 @@
 use minifb::{Key, Window, WindowOptions};
 
-use crate::constants::{SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::constants::{KEYPAD_TRACKED_KEYS, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 pub struct Display {
     buffer: [u32; SCREEN_WIDTH * SCREEN_HEIGHT],
@@ -38,8 +38,12 @@ impl Display {
         self.window.is_open()
     }
 
-    pub fn is_key_down(&self, key: Key) -> Result<bool, DisplayError> {
-        Ok(self.window.is_key_down(key))
+    pub fn is_key_down(&self, key: Key) -> bool {
+        self.window.is_key_down(key)
+    }
+
+    pub fn poll_tracked_keys(&self) -> Result<[bool; 16], DisplayError> {
+        Ok(KEYPAD_TRACKED_KEYS.map(|key| self.is_key_down(key)))
     }
 
     pub fn draw_from_binary_buf(&mut self, buf: &[bool]) -> Result<(), DisplayError> {

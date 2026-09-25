@@ -1,9 +1,9 @@
-use std::{fs::File, io::Read, path::PathBuf};
+use std::path::PathBuf;
 
 use minifb::Key;
 
 use crate::{
-    constants::{CPU_CLOCK_SPEED_HZ, SCREEN_FPS, SCREEN_HEIGHT, SCREEN_WIDTH},
+    constants::{CPU_CLOCK_SPEED_HZ, SCREEN_FPS},
     display::{Display, DisplayError},
     processor::{Processor, RuntimeError},
 };
@@ -51,7 +51,9 @@ impl Emulator {
 
     pub fn run(&mut self) -> Result<(), EmulatorError> {
         // 60 FPS Loop for screen updates
-        while self.display.is_open() && !self.display.is_key_down(Key::Escape)? {
+        while self.display.is_open() && !self.display.is_key_down(Key::Escape) {
+            self.processor.keypad = self.display.poll_tracked_keys()?;
+
             // 600 FPS Loop to emulate 600hz CPU execution speed
             for _ in 0..(CPU_CLOCK_SPEED_HZ / SCREEN_FPS) {
                 self.processor.step()?;
