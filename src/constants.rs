@@ -21,6 +21,11 @@ pub const FONT: [u8; 80] = [
 pub const FONT_START_ADDRESS: u16 = 0x50;
 pub const ROM_START_ADDRESS: u16 = 0x200; // 512
 
+pub const STACK_SIZE: usize = 16;
+pub const REGISTER_COUNT: usize = 16;
+pub const RAM_SIZE: usize = 4096;
+pub const KEYPAD_SIZE: usize = 16;
+
 pub const SCREEN_WIDTH: usize = 64;
 pub const SCREEN_HEIGHT: usize = 32;
 

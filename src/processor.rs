@@ -1,17 +1,20 @@
-use crate::constants::{FONT, FONT_START_ADDRESS, ROM_START_ADDRESS, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::constants::{
+    FONT, FONT_START_ADDRESS, KEYPAD_SIZE, RAM_SIZE, REGISTER_COUNT, ROM_START_ADDRESS,
+    SCREEN_HEIGHT, SCREEN_WIDTH, STACK_SIZE,
+};
 
 pub struct Processor {
     pc: u16,                                           // Program counter
-    stack: [u16; 16],    // Stack for 16 16bit addressess for subroutines/functions
-    stack_pointer: u8,   // 8bit stack pointer
-    registers: [u8; 16], // 16 8bit registers: V0 - VF
-    memory: [u8; 4096],  // 4096B of RAM
-    memory_pointer: u16, // 16bit index register used as a memory pointer
-    delay_timer: u8,     // 8bit Delay timer
-    sound_timer: u8,     // 8bit Sound timer
+    stack: [u16; STACK_SIZE], // Stack for 16 16bit addressess for subroutines/functions
+    stack_pointer: u8,        // 8bit stack pointer
+    registers: [u8; REGISTER_COUNT], // 16 8bit registers: V0 - VF
+    memory: [u8; RAM_SIZE],   // 4096B of RAM
+    memory_pointer: u16,      // 16bit index register used as a memory pointer
+    delay_timer: u8,          // 8bit Delay timer
+    sound_timer: u8,          // 8bit Sound timer
     pub display: [bool; SCREEN_WIDTH * SCREEN_HEIGHT], // 64 * 32 Bool Display
-    pub keypad: [bool; 16], // 16 value 1bit Keypad
-    pub is_dirty: bool,  // Decides whether or not to update the display
+    pub keypad: [bool; KEYPAD_SIZE], // 16 value 1bit Keypad
+    pub is_dirty: bool,       // Decides whether or not to update the display
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -24,40 +27,41 @@ pub enum RuntimeError {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum Instruction {
-    ClearScreen,                             // 00E0
-    ReturnFromSubroutine,                    // 00EE
-    Jump(u16),                               // 1NNN
-    JumpSubroutine(u16),                     // 2NNN
-    SetRegister { x: usize, nn: u8 },        // 6XNN
-    AddValueToRegister { x: usize, nn: u8 }, // 7XNN
-    SetMemoryPointer(u16),                   // ANNN
-    Draw { x: usize, y: usize, n: u8 },      // DXYN
+    CLS,                               // 00E0 - Clear screen
+    RET,                               // 00EE - Return from subroutine
+    JP(u16),                           // 1NNN - Jump to address NNN
+    CALL(u16),                         // 2NNN - Call subroutine at address NNN
+    LD { x: usize, nn: u8 },           // 6XNN - Set register Vx = NN
+    ADD { x: usize, nn: u8 },          // 7XNN - Add NN to register Vx (Vx += NN)
+    LDI(u16),                          // ANNN - Set memory pointer I = NNN
+    DRW { x: usize, y: usize, n: u8 }, // DXYN - Draw n-byte sprite at (Vx, Vy)
     Undefined(u16),
 }
 
 impl Processor {
-    fn load_font(memory: &mut [u8; 4096], starting_addr: u16, font: &[u8; 80]) {
+    fn load_font(memory: &mut [u8; RAM_SIZE], starting_addr: u16, font: &[u8; 80]) {
         for (offset, val) in font.iter().enumerate() {
             memory[starting_addr as usize + offset] = *val;
         }
     }
 
     pub fn new() -> Self {
-        let mut memory = [0; 4096];
+        let mut memory = [0; RAM_SIZE];
         Self::load_font(&mut memory, FONT_START_ADDRESS, &FONT);
 
         Processor {
             pc: ROM_START_ADDRESS, // We initialize PC at 512, as that's where user programs live
-            stack: [0; 16],
+            stack: [0; STACK_SIZE],
             stack_pointer: 0,
-            registers: [0; 16],
+            registers: [0; REGISTER_COUNT],
             memory,
             memory_pointer: 0,
             delay_timer: 0,
             sound_timer: 0,
             display: [false; SCREEN_WIDTH * SCREEN_HEIGHT],
-            keypad: [false; 16],
+            keypad: [false; KEYPAD_SIZE],
             is_dirty: false,
         }
     }
@@ -92,7 +96,7 @@ impl Processor {
     }
 
     fn get_register(&self, x: usize) -> Result<&u8, RuntimeError> {
-        if x >= 16 {
+        if x >= REGISTER_COUNT {
             return Err(RuntimeError::RegisterIndexOutOfRange(x));
         }
 
@@ -100,7 +104,7 @@ impl Processor {
     }
 
     fn get_register_mut(&mut self, x: usize) -> Result<&mut u8, RuntimeError> {
-        if x >= 16 {
+        if x >= REGISTER_COUNT {
             return Err(RuntimeError::RegisterIndexOutOfRange(x));
         }
 
@@ -108,7 +112,7 @@ impl Processor {
     }
 
     fn push_to_stack(&mut self, x: u16) -> Result<(), RuntimeError> {
-        if self.stack_pointer as usize >= self.stack.len() {
+        if self.stack_pointer as usize >= STACK_SIZE {
             return Err(RuntimeError::StackOverflow(self.pc as usize));
         }
 
@@ -169,15 +173,14 @@ impl Processor {
         );
 
         match nibbles {
-            (0x0, 0x0, 0xE, 0x0) => Instruction::ClearScreen, // 00E0
-            (0x0, 0x0, 0xE, 0xE) => Instruction::ReturnFromSubroutine, // 00EE
-            (0x1, _, _, _) => Instruction::Jump(nnn),         // 1NNN
-            (0x2, _, _, _) => Instruction::JumpSubroutine(nnn), // 2NNN
-            (0x6, x, _, _) => Instruction::SetRegister { x: x as usize, nn }, // 6XNN
-            (0x7, x, _, _) => Instruction::AddValueToRegister { x: x as usize, nn }, // 7XNN
-            (0xA, _, _, _) => Instruction::SetMemoryPointer(nnn), //ANNN
-            (0xD, x, y, _) => Instruction::Draw {
-                // DXYN
+            (0x0, 0x0, 0xE, 0x0) => Instruction::CLS,
+            (0x0, 0x0, 0xE, 0xE) => Instruction::RET,
+            (0x1, _, _, _) => Instruction::JP(nnn),
+            (0x2, _, _, _) => Instruction::CALL(nnn),
+            (0x6, x, _, _) => Instruction::LD { x: x as usize, nn },
+            (0x7, x, _, _) => Instruction::ADD { x: x as usize, nn },
+            (0xA, _, _, _) => Instruction::LDI(nnn),
+            (0xD, x, y, _) => Instruction::DRW {
                 x: x as usize,
                 y: y as usize,
                 n,
@@ -188,63 +191,58 @@ impl Processor {
 
     pub fn execute(&mut self, instruction: Instruction) -> Result<(), RuntimeError> {
         match instruction {
-            Instruction::ClearScreen => self.instruction_clear_screen(),
-            Instruction::ReturnFromSubroutine => self.instruction_return_from_subroutine(),
-            Instruction::Jump(nnn) => self.instruction_jump(nnn),
-            Instruction::SetRegister { x, nn } => self.instruction_set_register(x, nn),
-            Instruction::AddValueToRegister { x, nn } => {
-                self.instruction_add_value_to_register(x, nn)
-            }
-            Instruction::SetMemoryPointer(nnn) => self.instruction_set_memory_pointer(nnn),
-            Instruction::Draw { x, y, n } => self.instruction_draw(x, y, n),
+            Instruction::CLS => self.instruction_cls(), // 00E0 - Clear screen
+            Instruction::RET => self.instruction_ret(), // 00EE - Return from subroutine
+            Instruction::JP(nnn) => self.instruction_jp(nnn), // 1NNN - Jump to address NNN
+            Instruction::CALL(nnn) => self.instruction_call(nnn), // 2NNN - Call subroutine at address NNN
+            Instruction::LD { x, nn } => self.instruction_ld(x, nn), // 6XNN - Set register Vx = NN
+            Instruction::ADD { x, nn } => self.instruction_add(x, nn), // 7XNN - Add NN to register Vx (Vx += NN)
+            Instruction::LDI(nnn) => self.instruction_ldi(nnn), // ANNN - Set memory pointer I = NNN
+            Instruction::DRW { x, y, n } => self.instruction_drw(x, y, n), // DXYN - Draw n-byte sprite at (Vx, Vy)
             _ => Err(RuntimeError::UnknownInstruction),
         }
     }
 
-    pub fn instruction_clear_screen(&mut self) -> Result<(), RuntimeError> {
+    pub fn instruction_cls(&mut self) -> Result<(), RuntimeError> {
         self.display.fill(false);
         Ok(())
     }
 
-    pub fn instruction_return_from_subroutine(&mut self) -> Result<(), RuntimeError> {
+    pub fn instruction_ret(&mut self) -> Result<(), RuntimeError> {
         self.pc = self.pop_from_stack()?;
         Ok(())
     }
 
-    pub fn instruction_jump(&mut self, nnn: u16) -> Result<(), RuntimeError> {
+    pub fn instruction_jp(&mut self, nnn: u16) -> Result<(), RuntimeError> {
         self.pc = nnn;
         Ok(())
     }
 
-    pub fn instruction_jump_subroutine(&mut self, nnn: u16) -> Result<(), RuntimeError> {
+    pub fn instruction_call(&mut self, nnn: u16) -> Result<(), RuntimeError> {
         self.push_to_stack(self.pc)?;
         self.pc = nnn;
         Ok(())
     }
 
-    pub fn instruction_set_register(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
+    pub fn instruction_ld(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
         *self.get_register_mut(x)? = nn;
 
         Ok(())
     }
 
-    pub fn instruction_add_value_to_register(
-        &mut self,
-        x: usize,
-        nn: u8,
-    ) -> Result<(), RuntimeError> {
+    pub fn instruction_add(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
         *self.get_register_mut(x)? = self.get_register(x)?.wrapping_add(nn);
 
         Ok(())
     }
 
-    pub fn instruction_set_memory_pointer(&mut self, nnn: u16) -> Result<(), RuntimeError> {
+    pub fn instruction_ldi(&mut self, nnn: u16) -> Result<(), RuntimeError> {
         self.memory_pointer = nnn;
 
         Ok(())
     }
 
-    pub fn instruction_draw(&mut self, x: usize, y: usize, n: u8) -> Result<(), RuntimeError> {
+    pub fn instruction_drw(&mut self, x: usize, y: usize, n: u8) -> Result<(), RuntimeError> {
         *self.get_register_mut(0xF)? = 0; // Reset collision register
 
         // Wrap for initial coordinates
@@ -338,11 +336,11 @@ mod processor_tests {
 
     #[test]
     fn decode_works() {
-        assert_eq!(Processor::decode(0x00E0), Instruction::ClearScreen);
-        assert_eq!(Processor::decode(0x1123), Instruction::Jump(0x123));
+        assert_eq!(Processor::decode(0x00E0), Instruction::CLS);
+        assert_eq!(Processor::decode(0x1123), Instruction::JP(0x123));
         assert_eq!(
             Processor::decode(0xD12F),
-            Instruction::Draw {
+            Instruction::DRW {
                 x: 0x1,
                 y: 0x2,
                 n: 0xF
@@ -350,7 +348,7 @@ mod processor_tests {
         );
         assert_eq!(
             Processor::decode(0x6F12),
-            Instruction::SetRegister { x: 0xF, nn: 0x12 }
+            Instruction::LD { x: 0xF, nn: 0x12 }
         );
     }
 
@@ -368,48 +366,48 @@ mod processor_tests {
     }
 
     #[test]
-    fn instruction_jump() {
+    fn instruction_jp() {
         let mut proc = create_processor_with_ram_filled(vec![]);
         assert_eq!(proc.pc, ROM_START_ADDRESS);
         for i in ROM_START_ADDRESS..=ROM_START_ADDRESS + 5 {
-            assert!(proc.instruction_jump(i).is_ok());
+            assert!(proc.instruction_jp(i).is_ok());
             assert_eq!(proc.pc, i);
         }
     }
 
     #[test]
-    fn instruction_set_register() {
+    fn instruction_ld() {
         let mut proc = create_processor_with_ram_filled(vec![]);
         for i in 0..15 {
             assert_eq!(*proc.get_register(i).unwrap(), 0);
-            assert!(proc.instruction_set_register(i, i as u8).is_ok());
+            assert!(proc.instruction_ld(i, i as u8).is_ok());
             assert_eq!(*proc.get_register(i).unwrap(), i as u8);
         }
     }
 
     #[test]
-    fn instruction_add_value_to_register() {
+    fn instruction_add() {
         let mut proc = create_processor_with_ram_filled(vec![]);
         for i in 0..15 {
             assert_eq!(*proc.get_register(i).unwrap(), 0);
-            assert!(proc.instruction_add_value_to_register(i, i as u8).is_ok());
+            assert!(proc.instruction_add(i, i as u8).is_ok());
             assert_eq!(*proc.get_register(i).unwrap(), i as u8);
         }
 
-        assert!(proc.instruction_add_value_to_register(1, 13).is_ok());
+        assert!(proc.instruction_add(1, 13).is_ok());
         assert_eq!(*proc.get_register(1).unwrap(), 14);
 
-        assert!(proc.instruction_add_value_to_register(0, 255).is_ok());
-        assert!(proc.instruction_add_value_to_register(0, 1).is_ok());
+        assert!(proc.instruction_add(0, 255).is_ok());
+        assert!(proc.instruction_add(0, 1).is_ok());
         assert_eq!(*proc.get_register(0).unwrap(), 0);
     }
 
     #[test]
-    fn instruction_display() {
+    fn instruction_drw() {
         let mut proc = create_processor_with_ram_filled(vec![]);
         proc.memory_pointer = FONT_START_ADDRESS;
 
-        assert!(proc.instruction_draw(0, 0, 5).is_ok());
+        assert!(proc.instruction_drw(0, 0, 5).is_ok());
 
         assert!(proc.display[0]);
         assert!(proc.display[1]);
@@ -420,21 +418,21 @@ mod processor_tests {
     }
 
     #[test]
-    fn instruction_display_double_draw_removes_sprite() {
+    fn instruction_drw_double_draw_removes_sprite() {
         let mut proc = create_processor_with_ram_filled(vec![]);
         proc.memory_pointer = FONT_START_ADDRESS;
 
-        assert!(proc.instruction_draw(0, 0, 5).is_ok());
+        assert!(proc.instruction_drw(0, 0, 5).is_ok());
         assert!(proc.display.iter().filter(|p| **p).count() != 0);
         assert_eq!(*proc.get_register(0xF).unwrap(), 0);
 
-        assert!(proc.instruction_draw(0, 0, 5).is_ok());
+        assert!(proc.instruction_drw(0, 0, 5).is_ok());
         assert!(proc.display.iter().filter(|p| **p).count() == 0);
         assert_eq!(*proc.get_register(0xF).unwrap(), 1);
     }
 
     #[test]
-    fn instruction_display_wraps_and_gets_clipped_when_out_of_range() {
+    fn instruction_drw_wraps_and_gets_clipped_when_out_of_range() {
         let mut proc = create_processor_with_ram_filled(vec![]);
         proc.memory_pointer = FONT_START_ADDRESS;
 
@@ -442,7 +440,7 @@ mod processor_tests {
         *proc.get_register_mut(0x0).unwrap() = (SCREEN_WIDTH + SCREEN_WIDTH - 1) as u8;
         *proc.get_register_mut(0x1).unwrap() = (SCREEN_HEIGHT + SCREEN_HEIGHT - 1) as u8;
 
-        assert!(proc.instruction_draw(0x0, 0x1, 5).is_ok());
+        assert!(proc.instruction_drw(0x0, 0x1, 5).is_ok());
 
         // Only a single bottom right pixel should get drawn
         assert!(proc.display.iter().filter(|p| **p).count() == 1);
@@ -487,50 +485,50 @@ mod processor_tests {
     }
 
     #[test]
-    fn instruction_jump_subroutine_ok() {
+    fn instruction_call_ok() {
         let mut proc = create_processor_with_ram_filled(vec![]);
 
         // 512 -> 560 -> 580
-        assert!(proc.instruction_jump_subroutine(560).is_ok());
-        assert!(proc.instruction_jump_subroutine(580).is_ok());
+        assert!(proc.instruction_call(560).is_ok());
+        assert!(proc.instruction_call(580).is_ok());
         assert!(proc.stack_pointer == 2);
         assert_eq!(proc.pop_from_stack().unwrap(), 560);
         assert_eq!(proc.pop_from_stack().unwrap(), 512);
     }
 
     #[test]
-    fn instruction_jump_subroutine_err_ovf() {
+    fn instruction_call_err_ovf() {
         let mut proc = create_processor_with_ram_filled(vec![]);
 
         for i in 512..528 {
-            assert!(proc.instruction_jump_subroutine(i).is_ok());
+            assert!(proc.instruction_call(i).is_ok());
         }
         assert!(matches!(
-            proc.instruction_jump_subroutine(528),
+            proc.instruction_call(528),
             Err(RuntimeError::StackOverflow(527))
         ));
     }
 
     #[test]
-    fn instruction_return_from_subroutine_ok() {
+    fn instruction_ret_ok() {
         let mut proc = create_processor_with_ram_filled(vec![]);
 
         // 512 -> 560 -> 580
-        assert!(proc.instruction_jump_subroutine(560).is_ok());
-        assert!(proc.instruction_jump_subroutine(580).is_ok());
+        assert!(proc.instruction_call(560).is_ok());
+        assert!(proc.instruction_call(580).is_ok());
 
-        assert!(proc.instruction_return_from_subroutine().is_ok());
+        assert!(proc.instruction_ret().is_ok());
         assert_eq!(proc.pc, 560);
-        assert!(proc.instruction_return_from_subroutine().is_ok());
+        assert!(proc.instruction_ret().is_ok());
         assert_eq!(proc.pc, 512);
     }
 
     #[test]
-    fn instruction_return_from_subroutine_err_udf() {
+    fn instruction_ret_err_udf() {
         let mut proc = create_processor_with_ram_filled(vec![]);
 
         assert!(matches!(
-            proc.instruction_return_from_subroutine(),
+            proc.instruction_ret(),
             Err(RuntimeError::StackUnderflow(512))
         ));
     }
