@@ -33,6 +33,9 @@ pub enum Instruction {
     RET,                               // 00EE - Return from subroutine
     JP(u16),                           // 1NNN - Jump to address NNN
     CALL(u16),                         // 2NNN - Call subroutine at address NNN
+    SE { x: usize, nn: u8 },           // 3XNN - Skip instruction if Vx == NN
+    SNE { x: usize, nn: u8 },          // 4XNN - Skip instruction if Vx != NN
+    SRE { x: usize, y: usize },        // 5XY0 - Skip instruction if Vx == Vy
     LD { x: usize, nn: u8 },           // 6XNN - Set register Vx = NN
     ADD { x: usize, nn: u8 },          // 7XNN - Add NN to register Vx (Vx += NN)
     LDI(u16),                          // ANNN - Set memory pointer I = NNN
@@ -177,6 +180,12 @@ impl Processor {
             (0x0, 0x0, 0xE, 0xE) => Instruction::RET,
             (0x1, _, _, _) => Instruction::JP(nnn),
             (0x2, _, _, _) => Instruction::CALL(nnn),
+            (0x3, x, _, _) => Instruction::SE { x: x as usize, nn },
+            (0x4, x, _, _) => Instruction::SNE { x: x as usize, nn },
+            (0x5, x, y, 0x0) => Instruction::SRE {
+                x: x as usize,
+                y: y as usize,
+            },
             (0x6, x, _, _) => Instruction::LD { x: x as usize, nn },
             (0x7, x, _, _) => Instruction::ADD { x: x as usize, nn },
             (0xA, _, _, _) => Instruction::LDI(nnn),
@@ -195,6 +204,9 @@ impl Processor {
             Instruction::RET => self.instruction_ret(), // 00EE - Return from subroutine
             Instruction::JP(nnn) => self.instruction_jp(nnn), // 1NNN - Jump to address NNN
             Instruction::CALL(nnn) => self.instruction_call(nnn), // 2NNN - Call subroutine at address NNN
+            Instruction::SE { x, nn } => self.instruction_se(x, nn), // 3XNN - Skip instruction if Vx == NN
+            Instruction::SNE { x, nn } => self.instruction_sne(x, nn), // 4XNN - Skip instruction if Vx != NN
+            Instruction::SRE { x, y } => self.instruction_sre(x, y), // 5XY0 - Skip instruction if Vx == Vy
             Instruction::LD { x, nn } => self.instruction_ld(x, nn), // 6XNN - Set register Vx = NN
             Instruction::ADD { x, nn } => self.instruction_add(x, nn), // 7XNN - Add NN to register Vx (Vx += NN)
             Instruction::LDI(nnn) => self.instruction_ldi(nnn), // ANNN - Set memory pointer I = NNN
@@ -221,6 +233,30 @@ impl Processor {
     pub fn instruction_call(&mut self, nnn: u16) -> Result<(), RuntimeError> {
         self.push_to_stack(self.pc)?;
         self.pc = nnn;
+        Ok(())
+    }
+
+    pub fn instruction_se(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
+        if *self.get_register(x)? == nn {
+            self.advance_pc();
+        }
+
+        Ok(())
+    }
+
+    pub fn instruction_sne(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
+        if *self.get_register(x)? != nn {
+            self.advance_pc();
+        }
+
+        Ok(())
+    }
+
+    pub fn instruction_sre(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
+        if *self.get_register(x)? == *self.get_register(y)? {
+            self.advance_pc();
+        }
+
         Ok(())
     }
 
@@ -531,5 +567,45 @@ mod processor_tests {
             proc.instruction_ret(),
             Err(RuntimeError::StackUnderflow(512))
         ));
+    }
+
+    #[test]
+    fn instruction_se() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        *proc.get_register_mut(0x5).unwrap() = 0xEF;
+
+        assert!(proc.instruction_se(0x5, 0xFF).is_ok());
+        assert_eq!(proc.pc, ROM_START_ADDRESS);
+
+        assert!(proc.instruction_se(0x5, 0xEF).is_ok());
+        assert_eq!(proc.pc, ROM_START_ADDRESS + 2);
+    }
+
+    #[test]
+    fn instruction_sne() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        *proc.get_register_mut(0x5).unwrap() = 0xEF;
+
+        assert!(proc.instruction_sne(0x5, 0xEF).is_ok());
+        assert_eq!(proc.pc, ROM_START_ADDRESS);
+
+        assert!(proc.instruction_sne(0x5, 0xFF).is_ok());
+        assert_eq!(proc.pc, ROM_START_ADDRESS + 2);
+    }
+
+    #[test]
+    fn instruction_sre() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        *proc.get_register_mut(0x5).unwrap() = 0xEF;
+        *proc.get_register_mut(0xF).unwrap() = 0xEF;
+
+        assert!(proc.instruction_sre(0x5, 0xE).is_ok());
+        assert_eq!(proc.pc, ROM_START_ADDRESS);
+
+        assert!(proc.instruction_sre(0x5, 0xF).is_ok());
+        assert_eq!(proc.pc, ROM_START_ADDRESS + 2);
     }
 }
