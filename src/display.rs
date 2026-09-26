@@ -47,11 +47,11 @@ impl Display {
     }
 
     pub fn draw_from_binary_buf(&mut self, buf: &[bool]) -> Result<(), DisplayError> {
-        for (i, pixel) in buf.iter().enumerate() {
-            if i >= self.buffer.len() {
-                return Err(DisplayError::DrawPixelOutOfRange(i));
-            }
+        if buf.len() > self.buffer.len() {
+            return Err(DisplayError::DrawPixelOutOfRange(buf.len()));
+        }
 
+        for (i, pixel) in buf.iter().enumerate() {
             self.buffer[i] = match &pixel {
                 true => 0xFFFFFFFF,
                 false => 0x00000000,

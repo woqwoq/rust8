@@ -42,7 +42,7 @@ impl Emulator {
     pub fn from_rom_file(path: PathBuf) -> Result<Self, EmulatorError> {
         let mut emu = Self::new();
         match std::fs::read(path) {
-            Ok(rom) => emu.processor.load_rom(rom)?,
+            Ok(rom) => emu.processor.load_rom(&rom)?,
             Err(_) => return Err(EmulatorError::RomOpen),
         }
 
