@@ -22,6 +22,7 @@ pub enum RuntimeError {
     UnknownInstruction,
     RegisterIndexOutOfRange(usize),
     MemoryIndexOutOfRange(usize),
+    KeypadIndexOutOfRange(usize),
     StackOverflow(usize),
     StackUnderflow(usize),
 }
@@ -50,7 +51,12 @@ pub enum Instruction {
     SNER { x: usize, y: usize },       // 9XY0 - Skip instruction if Vx != Vy
     LDI(u16),                          // ANNN - Set memory pointer I = NNN
     JPR(u16),                          // BNNN - Jump to address NNN + V0
+    RND { x: usize, nn: u8 },          // CXNN - Set Vx = random byte AND NN
     DRW { x: usize, y: usize, n: u8 }, // DXYN - Draw n-byte sprite at (Vx, Vy)
+    SKP(usize),                        // EX9E - Skip instruction if key in Vx is pressed
+    SKNP(usize),                       // EXA1 - Skip instruction if key in Vx is not pressed
+    LDDT(usize),                       // FX07 - Set Vx = DT value.
+    FX0A,                              // FX0A - Wait for a key, store the value of the key in Vx.
     Undefined(u16),
 }
 
@@ -143,6 +149,13 @@ impl Processor {
 
         self.stack_pointer -= 1;
         Ok(self.stack[self.stack_pointer as usize])
+    }
+
+    fn is_key_pressed(&self, key: u8) -> Result<bool, RuntimeError> {
+        if key as usize >= KEYPAD_SIZE {
+            return Err(RuntimeError::KeypadIndexOutOfRange(key as usize));
+        }
+        Ok(self.keypad[key as usize])
     }
 
     fn read_memory_range(
@@ -241,11 +254,15 @@ impl Processor {
             },
             (0xA, _, _, _) => Instruction::LDI(nnn),
             (0xB, _, _, _) => Instruction::JPR(nnn),
+            (0xC, x, _, _) => Instruction::RND { x: x as usize, nn },
             (0xD, x, y, _) => Instruction::DRW {
                 x: x as usize,
                 y: y as usize,
                 n,
             },
+            (0xE, x, 0x9, 0xE) => Instruction::SKP(x as usize),
+            (0xE, x, 0xA, 0x1) => Instruction::SKNP(x as usize),
+            (0xF, x, 0x0, 0x7) => Instruction::LDDT(x as usize),
             _ => Instruction::Undefined(instruction),
         }
     }
@@ -273,7 +290,11 @@ impl Processor {
             Instruction::SNER { x, y } => self.instruction_sner(x, y), // 9XY0 - Skip instruction if Vx != Vy
             Instruction::LDI(nnn) => self.instruction_ldi(nnn), // ANNN - Set memory pointer I = NNN
             Instruction::JPR(nnn) => self.instruction_jpr(nnn), // BNNN - Jump to address NNN + V0
+            Instruction::RND { x, nn } => self.instruction_rnd(x, nn),
             Instruction::DRW { x, y, n } => self.instruction_drw(x, y, n), // DXYN - Draw n-byte sprite at (Vx, Vy)
+            Instruction::SKP(x) => self.instruction_skp(x),
+            Instruction::SKNP(x) => self.instruction_sknp(x),
+            Instruction::LDDT(x) => self.instruction_lddt(x),
             _ => Err(RuntimeError::UnknownInstruction),
         }
     }
@@ -442,6 +463,12 @@ impl Processor {
         Ok(())
     }
 
+    pub fn instruction_rnd(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
+        *self.get_register_mut(x)? = rand::random::<u8>() & nn;
+
+        Ok(())
+    }
+
     pub fn instruction_drw(&mut self, x: usize, y: usize, n: u8) -> Result<(), RuntimeError> {
         *self.get_register_mut(0xF)? = 0; // Reset collision register
 
@@ -474,6 +501,28 @@ impl Processor {
         }
 
         self.is_dirty = true;
+
+        Ok(())
+    }
+
+    pub fn instruction_skp(&mut self, x: usize) -> Result<(), RuntimeError> {
+        if self.is_key_pressed(*self.get_register(x)?)? {
+            self.advance_pc();
+        }
+
+        Ok(())
+    }
+
+    pub fn instruction_sknp(&mut self, x: usize) -> Result<(), RuntimeError> {
+        if !self.is_key_pressed(*self.get_register(x)?)? {
+            self.advance_pc();
+        }
+
+        Ok(())
+    }
+
+    pub fn instruction_lddt(&mut self, x: usize) -> Result<(), RuntimeError> {
+        *self.get_register_mut(x)? = self.delay_timer;
 
         Ok(())
     }
@@ -921,5 +970,83 @@ mod processor_tests {
 
         assert!(proc.instruction_jpr(0x20F).is_ok());
         assert_eq!(proc.pc, 0x20F + 0xF);
+    }
+
+    #[test]
+    fn instruction_rnd() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        *proc.get_register_mut(0x0).unwrap() = 0xFF;
+        assert!(proc.instruction_rnd(0x0, 0x00).is_ok());
+        assert_eq!(*proc.get_register(0x0).unwrap(), 0);
+
+        assert!(proc.instruction_rnd(0x0, 0xF0).is_ok());
+        assert_eq!(*proc.get_register(0x0).unwrap() & 0x0F, 0);
+
+        assert!(proc.instruction_rnd(0x0, 0x0F).is_ok());
+        assert_eq!(*proc.get_register(0x0).unwrap() & 0xF0, 0);
+
+        assert!(matches!(
+            proc.instruction_rnd(16, 0xFF),
+            Err(RuntimeError::RegisterIndexOutOfRange(16))
+        ));
+    }
+
+    #[test]
+    fn instruction_skp() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        *proc.get_register_mut(0x0).unwrap() = 0xF;
+
+        assert!(proc.instruction_skp(0x0).is_ok());
+        assert_eq!(proc.pc, ROM_START_ADDRESS);
+
+        proc.keypad[0xF] = true;
+        assert!(proc.instruction_skp(0x0).is_ok());
+        assert_eq!(proc.pc, ROM_START_ADDRESS + 2);
+    }
+
+    #[test]
+    fn instruction_sknp() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        *proc.get_register_mut(0x0).unwrap() = 0xF;
+
+        proc.keypad[0xF] = true;
+        assert!(proc.instruction_sknp(0x0).is_ok());
+        assert_eq!(proc.pc, ROM_START_ADDRESS);
+
+        proc.keypad[0xF] = false;
+        assert!(proc.instruction_sknp(0x0).is_ok());
+        assert_eq!(proc.pc, ROM_START_ADDRESS + 2);
+    }
+
+    #[test]
+    fn instruction_lddt() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        proc.delay_timer = 49;
+        assert_eq!(*proc.get_register(0x0).unwrap(), 0);
+
+        assert!(proc.instruction_lddt(0x0).is_ok());
+        assert_eq!(*proc.get_register(0x0).unwrap(), 49);
+    }
+
+    #[test]
+    fn is_key_pressed() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        assert!(matches!(proc.is_key_pressed(0x0), Ok(false)));
+        assert!(matches!(proc.is_key_pressed(0xF), Ok(false)));
+
+        proc.keypad[0x0] = true;
+        proc.keypad[0xF] = true;
+        assert!(matches!(proc.is_key_pressed(0x0), Ok(true)));
+        assert!(matches!(proc.is_key_pressed(0xF), Ok(true)));
+
+        assert!(matches!(
+            proc.is_key_pressed(0xFF),
+            Err(RuntimeError::KeypadIndexOutOfRange(0xFF))
+        ));
     }
 }
