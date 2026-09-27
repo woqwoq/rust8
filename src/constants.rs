@@ -19,6 +19,7 @@ pub const FONT: [u8; 80] = [
     0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 ];
 pub const FONT_START_ADDRESS: u16 = 0x50;
+pub const SPRITE_SIZE: u16 = 5;
 pub const ROM_START_ADDRESS: u16 = 0x200; // 512
 
 pub const STACK_SIZE: usize = 16;

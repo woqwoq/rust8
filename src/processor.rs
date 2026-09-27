@@ -1,6 +1,6 @@
 use crate::constants::{
     FONT, FONT_START_ADDRESS, KEYPAD_SIZE, RAM_SIZE, REGISTER_COUNT, ROM_START_ADDRESS,
-    SCREEN_HEIGHT, SCREEN_WIDTH, STACK_SIZE,
+    SCREEN_HEIGHT, SCREEN_WIDTH, SPRITE_SIZE, STACK_SIZE,
 };
 
 pub struct Processor {
@@ -55,8 +55,12 @@ pub enum Instruction {
     DRW { x: usize, y: usize, n: u8 }, // DXYN - Draw n-byte sprite at (Vx, Vy)
     SKP(usize),                        // EX9E - Skip instruction if key in Vx is pressed
     SKNP(usize),                       // EXA1 - Skip instruction if key in Vx is not pressed
-    LDDT(usize),                       // FX07 - Set Vx = DT value.
-    FX0A,                              // FX0A - Wait for a key, store the value of the key in Vx.
+    LDDT(usize),                       // FX07 - Set Vx = DT value
+    LDK(usize),                        // FX0A - Wait for a key, store the value of the key in Vx
+    LDDTR(usize),                      // FX15 - Set delay timer = Vx
+    LDST(usize),                       // FX18 - Set sound timer = Vx
+    ADDI(usize),                       // FX1E - Set I = I + Vx
+    LDS(usize),                        // FX29 - Set I = location of sprite for digit in Vx
     Undefined(u16),
 }
 
@@ -113,6 +117,10 @@ impl Processor {
 
     pub fn advance_pc(&mut self) {
         self.pc += 2;
+    }
+
+    pub fn rollback_pc(&mut self) {
+        self.pc -= 2;
     }
 
     fn get_register(&self, x: usize) -> Result<&u8, RuntimeError> {
@@ -263,6 +271,11 @@ impl Processor {
             (0xE, x, 0x9, 0xE) => Instruction::SKP(x as usize),
             (0xE, x, 0xA, 0x1) => Instruction::SKNP(x as usize),
             (0xF, x, 0x0, 0x7) => Instruction::LDDT(x as usize),
+            (0xF, x, 0x0, 0xA) => Instruction::LDK(x as usize),
+            (0xF, x, 0x1, 0x5) => Instruction::LDDTR(x as usize),
+            (0xF, x, 0x1, 0x8) => Instruction::LDST(x as usize),
+            (0xF, x, 0x1, 0xE) => Instruction::ADDI(x as usize),
+            (0xF, x, 0x2, 0x9) => Instruction::LDS(x as usize),
             _ => Instruction::Undefined(instruction),
         }
     }
@@ -295,6 +308,11 @@ impl Processor {
             Instruction::SKP(x) => self.instruction_skp(x),
             Instruction::SKNP(x) => self.instruction_sknp(x),
             Instruction::LDDT(x) => self.instruction_lddt(x),
+            Instruction::LDK(x) => self.instruction_ldk(x),
+            Instruction::LDDTR(x) => self.instruction_lddtr(x),
+            Instruction::LDST(x) => self.instruction_ldst(x),
+            Instruction::ADDI(x) => self.instruction_addi(x),
+            Instruction::LDS(x) => self.instruction_lds(x),
             _ => Err(RuntimeError::UnknownInstruction),
         }
     }
@@ -527,6 +545,44 @@ impl Processor {
         Ok(())
     }
 
+    pub fn instruction_ldk(&mut self, x: usize) -> Result<(), RuntimeError> {
+        let _ = self.get_register(x)?; // fail-fast when register is out of range
+
+        if let Some(v) = self.keypad.iter().position(|&pressed| pressed) {
+            *self.get_register_mut(x)? = v as u8;
+        } else {
+            self.rollback_pc();
+        }
+
+        Ok(())
+    }
+
+    pub fn instruction_lddtr(&mut self, x: usize) -> Result<(), RuntimeError> {
+        self.delay_timer = *self.get_register(x)?;
+
+        Ok(())
+    }
+
+    pub fn instruction_ldst(&mut self, x: usize) -> Result<(), RuntimeError> {
+        self.sound_timer = *self.get_register(x)?;
+
+        Ok(())
+    }
+
+    pub fn instruction_addi(&mut self, x: usize) -> Result<(), RuntimeError> {
+        self.memory_pointer += *self.get_register(x)? as u16;
+
+        Ok(())
+    }
+
+    pub fn instruction_lds(&mut self, x: usize) -> Result<(), RuntimeError> {
+        let vx = *self.get_register(x)? as u16 & 0x0F;
+
+        self.memory_pointer = FONT_START_ADDRESS + (SPRITE_SIZE * vx);
+
+        Ok(())
+    }
+
     pub fn step(&mut self) -> Result<(), RuntimeError> {
         let opcode = self.fetch();
         let instruction = Self::decode(opcode);
@@ -537,7 +593,7 @@ impl Processor {
 #[cfg(test)]
 mod processor_tests {
     use crate::{
-        constants::{SCREEN_HEIGHT, SCREEN_WIDTH},
+        constants::{FONT, SCREEN_HEIGHT, SCREEN_WIDTH, SPRITE_SIZE},
         processor::{FONT_START_ADDRESS, Instruction, Processor, ROM_START_ADDRESS, RuntimeError},
     };
 
@@ -1048,5 +1104,79 @@ mod processor_tests {
             proc.is_key_pressed(0xFF),
             Err(RuntimeError::KeypadIndexOutOfRange(0xFF))
         ));
+    }
+
+    #[test]
+    fn instruction_ldk() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+        assert!(matches!(
+            proc.instruction_ldk(0xFF),
+            Err(RuntimeError::RegisterIndexOutOfRange(0xFF))
+        ));
+
+        proc.pc += 2;
+        assert!(proc.instruction_ldk(0xF).is_ok());
+        assert_eq!(*proc.get_register(0xF).unwrap(), 0);
+        assert_eq!(proc.pc, ROM_START_ADDRESS);
+
+        proc.pc += 2;
+        proc.keypad[0xE] = true;
+        assert!(proc.instruction_ldk(0xF).is_ok());
+        assert_eq!(*proc.get_register(0xF).unwrap(), 0xE);
+        assert_eq!(proc.pc, ROM_START_ADDRESS + 2);
+    }
+
+    #[test]
+    fn instruction_lddtr() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+        *proc.get_register_mut(0x0).unwrap() = 0x80;
+
+        assert_eq!(proc.delay_timer, 0);
+
+        assert!(proc.instruction_lddtr(0x0).is_ok());
+        assert_eq!(proc.delay_timer, 0x80);
+    }
+
+    #[test]
+    fn instruction_ldst() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+        *proc.get_register_mut(0x0).unwrap() = 0x80;
+
+        assert_eq!(proc.sound_timer, 0);
+
+        assert!(proc.instruction_ldst(0x0).is_ok());
+        assert_eq!(proc.sound_timer, 0x80);
+    }
+
+    #[test]
+    fn instruction_addi() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+        *proc.get_register_mut(0x0).unwrap() = 0x80;
+
+        assert_eq!(proc.memory_pointer, 0);
+
+        assert!(proc.instruction_addi(0x0).is_ok());
+        assert_eq!(proc.memory_pointer, 0x80);
+    }
+
+    #[test]
+    fn instruction_lds() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        *proc.get_register_mut(0x0).unwrap() = 0x80;
+
+        assert_eq!(proc.memory_pointer, 0);
+
+        for i in 0..FONT.len() / SPRITE_SIZE as usize {
+            *proc.get_register_mut(0x0).unwrap() = i as u8;
+            assert!(proc.instruction_lds(0x0).is_ok());
+
+            for j in 0..SPRITE_SIZE {
+                assert_eq!(
+                    proc.read_memory_byte(proc.memory_pointer + j).unwrap(),
+                    FONT[i * SPRITE_SIZE as usize + j as usize]
+                );
+            }
+        }
     }
 }
