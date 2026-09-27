@@ -123,6 +123,10 @@ impl Processor {
         self.pc -= 2;
     }
 
+    pub fn should_beep(&self) -> bool {
+        self.sound_timer != 0
+    }
+
     fn get_register(&self, x: usize) -> Result<u8, RuntimeError> {
         if x >= REGISTER_COUNT {
             return Err(RuntimeError::RegisterIndexOutOfRange(x));

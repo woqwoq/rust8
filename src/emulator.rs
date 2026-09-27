@@ -6,10 +6,12 @@ use crate::{
     constants::{CPU_CLOCK_SPEED_HZ, SCREEN_FPS},
     display::{Display, DisplayError},
     processor::{Processor, RuntimeError},
+    sound::Speaker,
 };
 pub struct Emulator {
     processor: Processor,
     display: Display,
+    speaker: Speaker,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -36,6 +38,7 @@ impl Emulator {
         Emulator {
             processor: Processor::new(),
             display: Display::new(),
+            speaker: Speaker::new(),
         }
     }
 
@@ -61,6 +64,12 @@ impl Emulator {
 
             // Tick timer at 60hz/FPS
             self.processor.tick_timers();
+
+            if self.processor.should_beep() {
+                self.speaker.play();
+            } else {
+                self.speaker.pause();
+            }
 
             // Redraw only when pixels are dirty
             if self.processor.is_dirty {
