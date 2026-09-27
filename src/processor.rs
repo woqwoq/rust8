@@ -44,7 +44,12 @@ pub enum Instruction {
     XOR { x: usize, y: usize },        // 8XY3 - Set Vx = Vx XOR Vy
     ADDR { x: usize, y: usize },       // 8XY4 - Set Vx = Vx + Vy, set Vf = Carry
     SUBR { x: usize, y: usize },       // 8XY5 - Set Vx = Vx - Vy, set Vf = Not Borrow
+    SHR { x: usize, y: usize },        // 8XY6 - Set Vx = Vx SHR 1, set Vf = LSB == 1
+    SUBRN { x: usize, y: usize },      // 8XY7 - Set Vx = Vy - Vx, set Vf = Not Borrow
+    SHL { x: usize, y: usize },        // 8XYE - Set Vx = Vx SHL 1, set Vf = LSB == 1
+    SNER { x: usize, y: usize },       // 9XY0 - Skip instruction if Vx != Vy
     LDI(u16),                          // ANNN - Set memory pointer I = NNN
+    JPR(u16),                          // BNNN - Jump to address NNN + V0
     DRW { x: usize, y: usize, n: u8 }, // DXYN - Draw n-byte sprite at (Vx, Vy)
     Undefined(u16),
 }
@@ -218,7 +223,24 @@ impl Processor {
                 x: x as usize,
                 y: y as usize,
             },
+            (0x8, x, y, 0x6) => Instruction::SHR {
+                x: x as usize,
+                y: y as usize,
+            },
+            (0x8, x, y, 0x7) => Instruction::SUBRN {
+                x: x as usize,
+                y: y as usize,
+            },
+            (0x8, x, y, 0xE) => Instruction::SHL {
+                x: x as usize,
+                y: y as usize,
+            },
+            (0x9, x, y, 0x0) => Instruction::SNER {
+                x: x as usize,
+                y: y as usize,
+            },
             (0xA, _, _, _) => Instruction::LDI(nnn),
+            (0xB, _, _, _) => Instruction::JPR(nnn),
             (0xD, x, y, _) => Instruction::DRW {
                 x: x as usize,
                 y: y as usize,
@@ -239,13 +261,18 @@ impl Processor {
             Instruction::SRE { x, y } => self.instruction_sre(x, y), // 5XY0 - Skip instruction if Vx == Vy
             Instruction::LD { x, nn } => self.instruction_ld(x, nn), // 6XNN - Set register Vx = NN
             Instruction::ADD { x, nn } => self.instruction_add(x, nn), // 7XNN - Add NN to register Vx (Vx += NN)
-            Instruction::LDR { x, y } => self.instruction_ldr(x, y),
-            Instruction::OR { x, y } => self.instruction_or(x, y),
-            Instruction::AND { x, y } => self.instruction_and(x, y),
-            Instruction::XOR { x, y } => self.instruction_xor(x, y),
-            Instruction::ADDR { x, y } => self.instruction_addr(x, y),
-            Instruction::SUBR { x, y } => self.instruction_subr(x, y),
+            Instruction::LDR { x, y } => self.instruction_ldr(x, y), // 8XY0 - Set register Vx = Vy
+            Instruction::OR { x, y } => self.instruction_or(x, y),   // 8XY1 - Set Vx = Vx OR Vy
+            Instruction::AND { x, y } => self.instruction_and(x, y), // 8XY2 - Set Vx = Vx AND Vy
+            Instruction::XOR { x, y } => self.instruction_xor(x, y), // 8XY3 - Set Vx = Vx XOR Vy
+            Instruction::ADDR { x, y } => self.instruction_addr(x, y), // 8XY4 - Set Vx = Vx + Vy, set Vf = Carry
+            Instruction::SUBR { x, y } => self.instruction_subr(x, y), // 8XY5 - Set Vx = Vx - Vy, set Vf = Not Borrow
+            Instruction::SHR { x, .. } => self.instruction_shr(x), // 8XY6 - Set Vx = Vx SHR 1, set Vf = LSB == 1
+            Instruction::SUBRN { x, y } => self.instruction_subrn(x, y), // 8XY7 - Set Vx = Vy - Vx, set Vf = Not Borrow
+            Instruction::SHL { x, .. } => self.instruction_shl(x), // 8XYE - Set Vx = Vx SHL 1, set Vf = LSB == 1
+            Instruction::SNER { x, y } => self.instruction_sner(x, y), // 9XY0 - Skip instruction if Vx != Vy
             Instruction::LDI(nnn) => self.instruction_ldi(nnn), // ANNN - Set memory pointer I = NNN
+            Instruction::JPR(nnn) => self.instruction_jpr(nnn), // BNNN - Jump to address NNN + V0
             Instruction::DRW { x, y, n } => self.instruction_drw(x, y, n), // DXYN - Draw n-byte sprite at (Vx, Vy)
             _ => Err(RuntimeError::UnknownInstruction),
         }
@@ -365,8 +392,52 @@ impl Processor {
         Ok(())
     }
 
+    pub fn instruction_shr(&mut self, x: usize) -> Result<(), RuntimeError> {
+        let vx = *self.get_register(x)?;
+
+        *self.get_register_mut(x)? = vx >> 1;
+        *self.get_register_mut(0xF)? = ((vx & 0x1) == 1) as u8; // Vf = LSB(Vx) == 1
+
+        Ok(())
+    }
+
+    pub fn instruction_subrn(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
+        let vx = *self.get_register(x)?;
+        let vy = *self.get_register(y)?;
+
+        let (res, ovf) = vy.overflowing_sub(vx);
+
+        *self.get_register_mut(x)? = res;
+        *self.get_register_mut(0xF)? = !ovf as u8;
+
+        Ok(())
+    }
+
+    pub fn instruction_shl(&mut self, x: usize) -> Result<(), RuntimeError> {
+        let vx = *self.get_register(x)?;
+
+        *self.get_register_mut(x)? = vx << 1;
+        *self.get_register_mut(0xF)? = ((vx >> 7) == 1) as u8; // Vf = MSB(Vx) == 1
+
+        Ok(())
+    }
+
+    pub fn instruction_sner(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
+        if *self.get_register(x)? != *self.get_register(y)? {
+            self.advance_pc();
+        }
+
+        Ok(())
+    }
+
     pub fn instruction_ldi(&mut self, nnn: u16) -> Result<(), RuntimeError> {
         self.memory_pointer = nnn;
+
+        Ok(())
+    }
+
+    pub fn instruction_jpr(&mut self, nnn: u16) -> Result<(), RuntimeError> {
+        self.pc = *self.get_register(0x0)? as u16 + nnn;
 
         Ok(())
     }
@@ -782,5 +853,73 @@ mod processor_tests {
         assert!(proc.instruction_subr(0x0, 0xE).is_ok());
         assert_eq!(*proc.get_register(0x0).unwrap(), 255);
         assert_eq!(*proc.get_register(0xF).unwrap(), 0);
+    }
+
+    #[test]
+    fn instruction_shr() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        assert!(proc.instruction_shr(0x0).is_ok());
+        assert_eq!(*proc.get_register(0xF).unwrap(), 0);
+
+        *proc.get_register_mut(0x0).unwrap() = 0b00001111;
+        assert!(proc.instruction_shr(0x0).is_ok());
+        assert_eq!(*proc.get_register(0x0).unwrap(), 0b000000111);
+        assert_eq!(*proc.get_register(0xF).unwrap(), 1);
+    }
+
+    #[test]
+    fn instruction_subrn() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        *proc.get_register_mut(0x0).unwrap() = 0xF0;
+        *proc.get_register_mut(0xF).unwrap() = 0xFF;
+
+        *proc.get_register_mut(0xE).unwrap() = 0xE;
+
+        assert!(proc.instruction_subrn(0x0, 0xF).is_ok());
+        assert_eq!(*proc.get_register(0x0).unwrap(), 0xF);
+        assert_eq!(*proc.get_register(0xF).unwrap(), 1);
+
+        assert!(proc.instruction_subrn(0x0, 0xE).is_ok());
+        assert_eq!(*proc.get_register(0x0).unwrap(), 255);
+        assert_eq!(*proc.get_register(0xF).unwrap(), 0);
+    }
+
+    #[test]
+    fn instruction_shl() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        assert!(proc.instruction_shl(0x0).is_ok());
+        assert_eq!(*proc.get_register(0xF).unwrap(), 0);
+
+        *proc.get_register_mut(0x0).unwrap() = 0b1000_1110;
+        assert!(proc.instruction_shl(0x0).is_ok());
+        assert_eq!(*proc.get_register(0x0).unwrap(), 0b0001_1100);
+        assert_eq!(*proc.get_register(0xF).unwrap(), 1);
+    }
+
+    #[test]
+    fn instruction_sner() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        *proc.get_register_mut(0xE).unwrap() = 0xFF;
+        *proc.get_register_mut(0xF).unwrap() = 0xFF;
+
+        assert!(proc.instruction_sner(0xE, 0xF).is_ok());
+        assert_eq!(proc.pc, ROM_START_ADDRESS);
+
+        assert!(proc.instruction_sner(0x0, 0xF).is_ok());
+        assert_eq!(proc.pc, ROM_START_ADDRESS + 2);
+    }
+
+    #[test]
+    fn instruction_jpr() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        *proc.get_register_mut(0x0).unwrap() = 0xF;
+
+        assert!(proc.instruction_jpr(0x20F).is_ok());
+        assert_eq!(proc.pc, 0x20F + 0xF);
     }
 }
