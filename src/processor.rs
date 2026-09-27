@@ -61,6 +61,9 @@ pub enum Instruction {
     LDST(usize),                       // FX18 - Set sound timer = Vx
     ADDI(usize),                       // FX1E - Set I = I + Vx
     LDS(usize),                        // FX29 - Set I = location of sprite for digit in Vx
+    LDB(usize),                        // FX33 - Store digits of Vx in memory at I, I+1, and I+2
+    LDRM(usize),                       // FX55 - Store V0 - Vx in memory at I
+    LDMR(usize),                       // FX65 - Read V0 - Vx from memory at I
     Undefined(u16),
 }
 
@@ -93,10 +96,7 @@ impl Processor {
     fn load_in_ram(&mut self, starting_addr: u16, data: &[u8]) -> Result<(), RuntimeError> {
         for (offset, item) in data.iter().enumerate() {
             let memory_index = starting_addr as usize + offset;
-            if memory_index >= self.memory.len() {
-                return Err(RuntimeError::MemoryIndexOutOfRange(memory_index));
-            }
-            self.memory[starting_addr as usize + offset] = *item;
+            *self.get_memory_byte_mut(memory_index)? = *item;
         }
         Ok(())
     }
@@ -123,12 +123,12 @@ impl Processor {
         self.pc -= 2;
     }
 
-    fn get_register(&self, x: usize) -> Result<&u8, RuntimeError> {
+    fn get_register(&self, x: usize) -> Result<u8, RuntimeError> {
         if x >= REGISTER_COUNT {
             return Err(RuntimeError::RegisterIndexOutOfRange(x));
         }
 
-        Ok(&self.registers[x])
+        Ok(self.registers[x])
     }
 
     fn get_register_mut(&mut self, x: usize) -> Result<&mut u8, RuntimeError> {
@@ -166,16 +166,20 @@ impl Processor {
         Ok(self.keypad[key as usize])
     }
 
-    fn read_memory_range(
-        &mut self,
-        start_address: u16,
-        end_address: u16,
-    ) -> Result<&[u8], RuntimeError> {
-        Ok(&self.memory[(start_address as usize)..(end_address as usize)])
+    fn get_memory_byte(&self, address: usize) -> Result<u8, RuntimeError> {
+        if address >= RAM_SIZE {
+            return Err(RuntimeError::MemoryIndexOutOfRange(address));
+        }
+
+        Ok(self.memory[address])
     }
 
-    fn read_memory_byte(&mut self, address: u16) -> Result<u8, RuntimeError> {
-        Ok(self.memory[address as usize])
+    fn get_memory_byte_mut(&mut self, address: usize) -> Result<&mut u8, RuntimeError> {
+        if address >= RAM_SIZE {
+            return Err(RuntimeError::MemoryIndexOutOfRange(address));
+        }
+
+        Ok(&mut self.memory[address])
     }
 
     fn get_display_mut(&mut self, x: usize, y: usize) -> Option<&mut bool> {
@@ -276,6 +280,9 @@ impl Processor {
             (0xF, x, 0x1, 0x8) => Instruction::LDST(x as usize),
             (0xF, x, 0x1, 0xE) => Instruction::ADDI(x as usize),
             (0xF, x, 0x2, 0x9) => Instruction::LDS(x as usize),
+            (0xF, x, 0x3, 0x3) => Instruction::LDB(x as usize),
+            (0xF, x, 0x5, 0x5) => Instruction::LDRM(x as usize),
+            (0xF, x, 0x6, 0x5) => Instruction::LDMR(x as usize),
             _ => Instruction::Undefined(instruction),
         }
     }
@@ -313,6 +320,9 @@ impl Processor {
             Instruction::LDST(x) => self.instruction_ldst(x),
             Instruction::ADDI(x) => self.instruction_addi(x),
             Instruction::LDS(x) => self.instruction_lds(x),
+            Instruction::LDB(x) => self.instruction_ldb(x),
+            Instruction::LDRM(x) => self.instruction_ldrm(x),
+            Instruction::LDMR(x) => self.instruction_ldmr(x),
             _ => Err(RuntimeError::UnknownInstruction),
         }
     }
@@ -339,7 +349,7 @@ impl Processor {
     }
 
     pub fn instruction_se(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
-        if *self.get_register(x)? == nn {
+        if self.get_register(x)? == nn {
             self.advance_pc();
         }
 
@@ -347,7 +357,7 @@ impl Processor {
     }
 
     pub fn instruction_sne(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
-        if *self.get_register(x)? != nn {
+        if self.get_register(x)? != nn {
             self.advance_pc();
         }
 
@@ -355,7 +365,7 @@ impl Processor {
     }
 
     pub fn instruction_sre(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
-        if *self.get_register(x)? == *self.get_register(y)? {
+        if self.get_register(x)? == self.get_register(y)? {
             self.advance_pc();
         }
 
@@ -375,14 +385,14 @@ impl Processor {
     }
 
     pub fn instruction_ldr(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
-        *self.get_register_mut(x)? = *self.get_register(y)?;
+        *self.get_register_mut(x)? = self.get_register(y)?;
 
         Ok(())
     }
 
     pub fn instruction_or(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
-        let vx = *self.get_register(x)?;
-        let vy = *self.get_register(y)?;
+        let vx = self.get_register(x)?;
+        let vy = self.get_register(y)?;
 
         *self.get_register_mut(x)? = vx | vy;
 
@@ -390,8 +400,8 @@ impl Processor {
     }
 
     pub fn instruction_and(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
-        let vx = *self.get_register(x)?;
-        let vy = *self.get_register(y)?;
+        let vx = self.get_register(x)?;
+        let vy = self.get_register(y)?;
 
         *self.get_register_mut(x)? = vx & vy;
 
@@ -399,8 +409,8 @@ impl Processor {
     }
 
     pub fn instruction_xor(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
-        let vx = *self.get_register(x)?;
-        let vy = *self.get_register(y)?;
+        let vx = self.get_register(x)?;
+        let vy = self.get_register(y)?;
 
         *self.get_register_mut(x)? = vx ^ vy;
 
@@ -408,8 +418,8 @@ impl Processor {
     }
 
     pub fn instruction_addr(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
-        let vx = *self.get_register(x)?;
-        let vy = *self.get_register(y)?;
+        let vx = self.get_register(x)?;
+        let vy = self.get_register(y)?;
 
         let (res, ovf) = vx.overflowing_add(vy);
 
@@ -420,8 +430,8 @@ impl Processor {
     }
 
     pub fn instruction_subr(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
-        let vx = *self.get_register(x)?;
-        let vy = *self.get_register(y)?;
+        let vx = self.get_register(x)?;
+        let vy = self.get_register(y)?;
 
         let (res, ovf) = vx.overflowing_sub(vy);
 
@@ -432,7 +442,7 @@ impl Processor {
     }
 
     pub fn instruction_shr(&mut self, x: usize) -> Result<(), RuntimeError> {
-        let vx = *self.get_register(x)?;
+        let vx = self.get_register(x)?;
 
         *self.get_register_mut(x)? = vx >> 1;
         *self.get_register_mut(0xF)? = ((vx & 0x1) == 1) as u8; // Vf = LSB(Vx) == 1
@@ -441,8 +451,8 @@ impl Processor {
     }
 
     pub fn instruction_subrn(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
-        let vx = *self.get_register(x)?;
-        let vy = *self.get_register(y)?;
+        let vx = self.get_register(x)?;
+        let vy = self.get_register(y)?;
 
         let (res, ovf) = vy.overflowing_sub(vx);
 
@@ -453,7 +463,7 @@ impl Processor {
     }
 
     pub fn instruction_shl(&mut self, x: usize) -> Result<(), RuntimeError> {
-        let vx = *self.get_register(x)?;
+        let vx = self.get_register(x)?;
 
         *self.get_register_mut(x)? = vx << 1;
         *self.get_register_mut(0xF)? = ((vx >> 7) == 1) as u8; // Vf = MSB(Vx) == 1
@@ -462,7 +472,7 @@ impl Processor {
     }
 
     pub fn instruction_sner(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
-        if *self.get_register(x)? != *self.get_register(y)? {
+        if self.get_register(x)? != self.get_register(y)? {
             self.advance_pc();
         }
 
@@ -476,7 +486,7 @@ impl Processor {
     }
 
     pub fn instruction_jpr(&mut self, nnn: u16) -> Result<(), RuntimeError> {
-        self.pc = *self.get_register(0x0)? as u16 + nnn;
+        self.pc = self.get_register(0x0)? as u16 + nnn;
 
         Ok(())
     }
@@ -491,17 +501,17 @@ impl Processor {
         *self.get_register_mut(0xF)? = 0; // Reset collision register
 
         // Wrap for initial coordinates
-        let vx = *self.get_register(x)? as usize % SCREEN_WIDTH;
-        let vy = *self.get_register(y)? as usize % SCREEN_HEIGHT;
+        let vx = self.get_register(x)? as usize % SCREEN_WIDTH;
+        let vy = self.get_register(y)? as usize % SCREEN_HEIGHT;
 
-        for row in 0..n {
+        for row in 0..n as usize {
             // Load first byte (row) of a sprite (e.g **** | 11110000 | 0xF0)
-            let sprite_byte = self.read_memory_byte(self.memory_pointer + (row as u16))?;
+            let sprite_byte = self.get_memory_byte(self.memory_pointer as usize + row)?;
 
             for col in 0..8 {
                 // If we are inside of the range of the current screen, we render XOR of current
                 // sprite bit and current displayed bit
-                if let Some(display_bit) = self.get_display_mut(vx + col, vy + row as usize) {
+                if let Some(display_bit) = self.get_display_mut(vx + col, vy + row) {
                     // Extract col-th bit from our sprite's byte (row)
                     let bit = (sprite_byte >> (7 - col as u8) & 1) == 1;
 
@@ -524,7 +534,7 @@ impl Processor {
     }
 
     pub fn instruction_skp(&mut self, x: usize) -> Result<(), RuntimeError> {
-        if self.is_key_pressed(*self.get_register(x)?)? {
+        if self.is_key_pressed(self.get_register(x)?)? {
             self.advance_pc();
         }
 
@@ -532,7 +542,7 @@ impl Processor {
     }
 
     pub fn instruction_sknp(&mut self, x: usize) -> Result<(), RuntimeError> {
-        if !self.is_key_pressed(*self.get_register(x)?)? {
+        if !self.is_key_pressed(self.get_register(x)?)? {
             self.advance_pc();
         }
 
@@ -558,27 +568,54 @@ impl Processor {
     }
 
     pub fn instruction_lddtr(&mut self, x: usize) -> Result<(), RuntimeError> {
-        self.delay_timer = *self.get_register(x)?;
+        self.delay_timer = self.get_register(x)?;
 
         Ok(())
     }
 
     pub fn instruction_ldst(&mut self, x: usize) -> Result<(), RuntimeError> {
-        self.sound_timer = *self.get_register(x)?;
+        self.sound_timer = self.get_register(x)?;
 
         Ok(())
     }
 
     pub fn instruction_addi(&mut self, x: usize) -> Result<(), RuntimeError> {
-        self.memory_pointer += *self.get_register(x)? as u16;
+        self.memory_pointer += self.get_register(x)? as u16;
 
         Ok(())
     }
 
     pub fn instruction_lds(&mut self, x: usize) -> Result<(), RuntimeError> {
-        let vx = *self.get_register(x)? as u16 & 0x0F;
+        let vx = self.get_register(x)? as u16 & 0x0F;
 
         self.memory_pointer = FONT_START_ADDRESS + (SPRITE_SIZE * vx);
+
+        Ok(())
+    }
+
+    pub fn instruction_ldb(&mut self, x: usize) -> Result<(), RuntimeError> {
+        let vx = self.get_register(x)?;
+        let i = self.memory_pointer as usize;
+
+        *self.get_memory_byte_mut(i)? = vx / 100;
+        *self.get_memory_byte_mut(i + 1)? = (vx % 100) / 10;
+        *self.get_memory_byte_mut(i + 2)? = vx % 10;
+
+        Ok(())
+    }
+
+    pub fn instruction_ldrm(&mut self, x: usize) -> Result<(), RuntimeError> {
+        for i in 0..=x {
+            *self.get_memory_byte_mut(i + self.memory_pointer as usize)? = self.get_register(i)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn instruction_ldmr(&mut self, x: usize) -> Result<(), RuntimeError> {
+        for i in 0..=x {
+            *self.get_register_mut(i)? = self.get_memory_byte(i + self.memory_pointer as usize)?;
+        }
 
         Ok(())
     }
@@ -593,7 +630,7 @@ impl Processor {
 #[cfg(test)]
 mod processor_tests {
     use crate::{
-        constants::{FONT, SCREEN_HEIGHT, SCREEN_WIDTH, SPRITE_SIZE},
+        constants::{FONT, RAM_SIZE, REGISTER_COUNT, SCREEN_HEIGHT, SCREEN_WIDTH, SPRITE_SIZE},
         processor::{FONT_START_ADDRESS, Instruction, Processor, ROM_START_ADDRESS, RuntimeError},
     };
 
@@ -671,6 +708,24 @@ mod processor_tests {
     }
 
     #[test]
+    fn get_memory_byte() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        for i in 0..100 {
+            *proc.get_memory_byte_mut(i).unwrap() = i as u8;
+        }
+
+        for i in 0..100 {
+            assert_eq!(proc.get_memory_byte(i).unwrap(), i as u8);
+        }
+
+        assert!(matches!(
+            proc.get_memory_byte(RAM_SIZE + 1),
+            Err(RuntimeError::MemoryIndexOutOfRange(_))
+        ));
+    }
+
+    #[test]
     fn instruction_jp() {
         let mut proc = create_processor_with_ram_filled(vec![]);
         assert_eq!(proc.pc, ROM_START_ADDRESS);
@@ -684,9 +739,9 @@ mod processor_tests {
     fn instruction_ld() {
         let mut proc = create_processor_with_ram_filled(vec![]);
         for i in 0..15 {
-            assert_eq!(*proc.get_register(i).unwrap(), 0);
+            assert_eq!(proc.get_register(i).unwrap(), 0);
             assert!(proc.instruction_ld(i, i as u8).is_ok());
-            assert_eq!(*proc.get_register(i).unwrap(), i as u8);
+            assert_eq!(proc.get_register(i).unwrap(), i as u8);
         }
     }
 
@@ -694,17 +749,17 @@ mod processor_tests {
     fn instruction_add() {
         let mut proc = create_processor_with_ram_filled(vec![]);
         for i in 0..15 {
-            assert_eq!(*proc.get_register(i).unwrap(), 0);
+            assert_eq!(proc.get_register(i).unwrap(), 0);
             assert!(proc.instruction_add(i, i as u8).is_ok());
-            assert_eq!(*proc.get_register(i).unwrap(), i as u8);
+            assert_eq!(proc.get_register(i).unwrap(), i as u8);
         }
 
         assert!(proc.instruction_add(1, 13).is_ok());
-        assert_eq!(*proc.get_register(1).unwrap(), 14);
+        assert_eq!(proc.get_register(1).unwrap(), 14);
 
         assert!(proc.instruction_add(0, 255).is_ok());
         assert!(proc.instruction_add(0, 1).is_ok());
-        assert_eq!(*proc.get_register(0).unwrap(), 0);
+        assert_eq!(proc.get_register(0).unwrap(), 0);
     }
 
     #[test]
@@ -729,11 +784,11 @@ mod processor_tests {
 
         assert!(proc.instruction_drw(0, 0, 5).is_ok());
         assert!(proc.display.iter().filter(|p| **p).count() != 0);
-        assert_eq!(*proc.get_register(0xF).unwrap(), 0);
+        assert_eq!(proc.get_register(0xF).unwrap(), 0);
 
         assert!(proc.instruction_drw(0, 0, 5).is_ok());
         assert!(proc.display.iter().filter(|p| **p).count() == 0);
-        assert_eq!(*proc.get_register(0xF).unwrap(), 1);
+        assert_eq!(proc.get_register(0xF).unwrap(), 1);
     }
 
     #[test]
@@ -886,8 +941,8 @@ mod processor_tests {
 
         assert!(proc.instruction_ldr(0x0, 0xF).is_ok());
         assert_eq!(
-            *proc.get_register(0x0).unwrap(),
-            *proc.get_register(0xF).unwrap()
+            proc.get_register(0x0).unwrap(),
+            proc.get_register(0xF).unwrap()
         );
     }
 
@@ -899,7 +954,7 @@ mod processor_tests {
         *proc.get_register_mut(0xF).unwrap() = 0b01010101;
 
         assert!(proc.instruction_or(0x0, 0xF).is_ok());
-        assert_eq!(*proc.get_register(0x0).unwrap(), 0b11111111);
+        assert_eq!(proc.get_register(0x0).unwrap(), 0b11111111);
     }
 
     #[test]
@@ -910,7 +965,7 @@ mod processor_tests {
         *proc.get_register_mut(0xF).unwrap() = 0b00001111;
 
         assert!(proc.instruction_and(0x0, 0xF).is_ok());
-        assert_eq!(*proc.get_register(0x0).unwrap(), 0b00001010);
+        assert_eq!(proc.get_register(0x0).unwrap(), 0b00001010);
     }
 
     #[test]
@@ -921,7 +976,7 @@ mod processor_tests {
         *proc.get_register_mut(0xF).unwrap() = 0b11111111;
 
         assert!(proc.instruction_xor(0x0, 0xF).is_ok());
-        assert_eq!(*proc.get_register(0x0).unwrap(), 0b11110000);
+        assert_eq!(proc.get_register(0x0).unwrap(), 0b11110000);
     }
 
     #[test]
@@ -934,12 +989,12 @@ mod processor_tests {
         *proc.get_register_mut(0xE).unwrap() = 0xF1;
 
         assert!(proc.instruction_addr(0x0, 0xF).is_ok());
-        assert_eq!(*proc.get_register(0x0).unwrap(), 0xF);
-        assert_eq!(*proc.get_register(0xF).unwrap(), 0);
+        assert_eq!(proc.get_register(0x0).unwrap(), 0xF);
+        assert_eq!(proc.get_register(0xF).unwrap(), 0);
 
         assert!(proc.instruction_addr(0x0, 0xE).is_ok());
-        assert_eq!(*proc.get_register(0x0).unwrap(), 0);
-        assert_eq!(*proc.get_register(0xF).unwrap(), 1);
+        assert_eq!(proc.get_register(0x0).unwrap(), 0);
+        assert_eq!(proc.get_register(0xF).unwrap(), 1);
     }
 
     #[test]
@@ -952,12 +1007,12 @@ mod processor_tests {
         *proc.get_register_mut(0xE).unwrap() = 0x10;
 
         assert!(proc.instruction_subr(0x0, 0xF).is_ok());
-        assert_eq!(*proc.get_register(0x0).unwrap(), 0xF);
-        assert_eq!(*proc.get_register(0xF).unwrap(), 1);
+        assert_eq!(proc.get_register(0x0).unwrap(), 0xF);
+        assert_eq!(proc.get_register(0xF).unwrap(), 1);
 
         assert!(proc.instruction_subr(0x0, 0xE).is_ok());
-        assert_eq!(*proc.get_register(0x0).unwrap(), 255);
-        assert_eq!(*proc.get_register(0xF).unwrap(), 0);
+        assert_eq!(proc.get_register(0x0).unwrap(), 255);
+        assert_eq!(proc.get_register(0xF).unwrap(), 0);
     }
 
     #[test]
@@ -965,12 +1020,12 @@ mod processor_tests {
         let mut proc = create_processor_with_ram_filled(vec![]);
 
         assert!(proc.instruction_shr(0x0).is_ok());
-        assert_eq!(*proc.get_register(0xF).unwrap(), 0);
+        assert_eq!(proc.get_register(0xF).unwrap(), 0);
 
         *proc.get_register_mut(0x0).unwrap() = 0b00001111;
         assert!(proc.instruction_shr(0x0).is_ok());
-        assert_eq!(*proc.get_register(0x0).unwrap(), 0b000000111);
-        assert_eq!(*proc.get_register(0xF).unwrap(), 1);
+        assert_eq!(proc.get_register(0x0).unwrap(), 0b000000111);
+        assert_eq!(proc.get_register(0xF).unwrap(), 1);
     }
 
     #[test]
@@ -983,12 +1038,12 @@ mod processor_tests {
         *proc.get_register_mut(0xE).unwrap() = 0xE;
 
         assert!(proc.instruction_subrn(0x0, 0xF).is_ok());
-        assert_eq!(*proc.get_register(0x0).unwrap(), 0xF);
-        assert_eq!(*proc.get_register(0xF).unwrap(), 1);
+        assert_eq!(proc.get_register(0x0).unwrap(), 0xF);
+        assert_eq!(proc.get_register(0xF).unwrap(), 1);
 
         assert!(proc.instruction_subrn(0x0, 0xE).is_ok());
-        assert_eq!(*proc.get_register(0x0).unwrap(), 255);
-        assert_eq!(*proc.get_register(0xF).unwrap(), 0);
+        assert_eq!(proc.get_register(0x0).unwrap(), 255);
+        assert_eq!(proc.get_register(0xF).unwrap(), 0);
     }
 
     #[test]
@@ -996,12 +1051,12 @@ mod processor_tests {
         let mut proc = create_processor_with_ram_filled(vec![]);
 
         assert!(proc.instruction_shl(0x0).is_ok());
-        assert_eq!(*proc.get_register(0xF).unwrap(), 0);
+        assert_eq!(proc.get_register(0xF).unwrap(), 0);
 
         *proc.get_register_mut(0x0).unwrap() = 0b1000_1110;
         assert!(proc.instruction_shl(0x0).is_ok());
-        assert_eq!(*proc.get_register(0x0).unwrap(), 0b0001_1100);
-        assert_eq!(*proc.get_register(0xF).unwrap(), 1);
+        assert_eq!(proc.get_register(0x0).unwrap(), 0b0001_1100);
+        assert_eq!(proc.get_register(0xF).unwrap(), 1);
     }
 
     #[test]
@@ -1034,13 +1089,13 @@ mod processor_tests {
 
         *proc.get_register_mut(0x0).unwrap() = 0xFF;
         assert!(proc.instruction_rnd(0x0, 0x00).is_ok());
-        assert_eq!(*proc.get_register(0x0).unwrap(), 0);
+        assert_eq!(proc.get_register(0x0).unwrap(), 0);
 
         assert!(proc.instruction_rnd(0x0, 0xF0).is_ok());
-        assert_eq!(*proc.get_register(0x0).unwrap() & 0x0F, 0);
+        assert_eq!(proc.get_register(0x0).unwrap() & 0x0F, 0);
 
         assert!(proc.instruction_rnd(0x0, 0x0F).is_ok());
-        assert_eq!(*proc.get_register(0x0).unwrap() & 0xF0, 0);
+        assert_eq!(proc.get_register(0x0).unwrap() & 0xF0, 0);
 
         assert!(matches!(
             proc.instruction_rnd(16, 0xFF),
@@ -1082,10 +1137,10 @@ mod processor_tests {
         let mut proc = create_processor_with_ram_filled(vec![]);
 
         proc.delay_timer = 49;
-        assert_eq!(*proc.get_register(0x0).unwrap(), 0);
+        assert_eq!(proc.get_register(0x0).unwrap(), 0);
 
         assert!(proc.instruction_lddt(0x0).is_ok());
-        assert_eq!(*proc.get_register(0x0).unwrap(), 49);
+        assert_eq!(proc.get_register(0x0).unwrap(), 49);
     }
 
     #[test]
@@ -1116,13 +1171,13 @@ mod processor_tests {
 
         proc.pc += 2;
         assert!(proc.instruction_ldk(0xF).is_ok());
-        assert_eq!(*proc.get_register(0xF).unwrap(), 0);
+        assert_eq!(proc.get_register(0xF).unwrap(), 0);
         assert_eq!(proc.pc, ROM_START_ADDRESS);
 
         proc.pc += 2;
         proc.keypad[0xE] = true;
         assert!(proc.instruction_ldk(0xF).is_ok());
-        assert_eq!(*proc.get_register(0xF).unwrap(), 0xE);
+        assert_eq!(proc.get_register(0xF).unwrap(), 0xE);
         assert_eq!(proc.pc, ROM_START_ADDRESS + 2);
     }
 
@@ -1173,10 +1228,136 @@ mod processor_tests {
 
             for j in 0..SPRITE_SIZE {
                 assert_eq!(
-                    proc.read_memory_byte(proc.memory_pointer + j).unwrap(),
+                    proc.get_memory_byte((proc.memory_pointer + j) as usize)
+                        .unwrap(),
                     FONT[i * SPRITE_SIZE as usize + j as usize]
                 );
             }
+        }
+    }
+
+    #[test]
+    fn instruction_ldb() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        *proc.get_register_mut(0x0).unwrap() = 123;
+
+        assert_eq!(
+            proc.get_memory_byte(proc.memory_pointer as usize).unwrap(),
+            0
+        );
+        assert_eq!(
+            proc.get_memory_byte(1 + proc.memory_pointer as usize)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            proc.get_memory_byte(2 + proc.memory_pointer as usize)
+                .unwrap(),
+            0
+        );
+
+        assert!(proc.instruction_ldb(0x0).is_ok());
+        assert_eq!(
+            proc.get_memory_byte(proc.memory_pointer as usize).unwrap(),
+            1
+        );
+        assert_eq!(
+            proc.get_memory_byte(1 + proc.memory_pointer as usize)
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            proc.get_memory_byte(2 + proc.memory_pointer as usize)
+                .unwrap(),
+            3
+        );
+
+        *proc.get_register_mut(0x0).unwrap() = 250;
+        assert!(proc.instruction_ldb(0x0).is_ok());
+        assert_eq!(
+            proc.get_memory_byte(proc.memory_pointer as usize).unwrap(),
+            2
+        );
+        assert_eq!(
+            proc.get_memory_byte(1 + proc.memory_pointer as usize)
+                .unwrap(),
+            5
+        );
+        assert_eq!(
+            proc.get_memory_byte(2 + proc.memory_pointer as usize)
+                .unwrap(),
+            0
+        );
+
+        *proc.get_register_mut(0x0).unwrap() = 42;
+        assert!(proc.instruction_ldb(0x0).is_ok());
+        assert_eq!(
+            proc.get_memory_byte(proc.memory_pointer as usize).unwrap(),
+            0
+        );
+        assert_eq!(
+            proc.get_memory_byte(1 + proc.memory_pointer as usize)
+                .unwrap(),
+            4
+        );
+        assert_eq!(
+            proc.get_memory_byte(2 + proc.memory_pointer as usize)
+                .unwrap(),
+            2
+        );
+
+        *proc.get_register_mut(0x0).unwrap() = 0;
+        assert!(proc.instruction_ldb(0x0).is_ok());
+        assert_eq!(
+            proc.get_memory_byte(proc.memory_pointer as usize).unwrap(),
+            0
+        );
+        assert_eq!(
+            proc.get_memory_byte(1 + proc.memory_pointer as usize)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            proc.get_memory_byte(2 + proc.memory_pointer as usize)
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn instruction_ldrm() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        for i in 0..REGISTER_COUNT as u8 {
+            *proc.get_register_mut(i as usize).unwrap() = i;
+        }
+
+        assert!(proc.instruction_ldrm(0xF).is_ok());
+
+        for i in 0..REGISTER_COUNT as u8 {
+            assert_eq!(
+                proc.get_memory_byte((i as u16 + proc.memory_pointer) as usize)
+                    .unwrap(),
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn instruction_ldmr() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+
+        for i in 0..REGISTER_COUNT as u8 {
+            *proc
+                .get_memory_byte_mut((i as u16 + proc.memory_pointer) as usize)
+                .unwrap() = i;
+        }
+
+        assert!(proc.instruction_ldmr(0xF).is_ok());
+
+        for i in 0..REGISTER_COUNT as u8 {
+            assert_eq!(*proc.get_register_mut(i as usize).unwrap(), i);
         }
     }
 }
