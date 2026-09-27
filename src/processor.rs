@@ -22,7 +22,6 @@ pub enum RuntimeError {
     UnknownInstruction,
     RegisterIndexOutOfRange(usize),
     MemoryIndexOutOfRange(usize),
-    KeypadIndexOutOfRange(usize),
     StackOverflow(usize),
     StackUnderflow(usize),
 }
@@ -163,11 +162,11 @@ impl Processor {
         Ok(self.stack[self.stack_pointer as usize])
     }
 
-    fn is_key_pressed(&self, key: u8) -> Result<bool, RuntimeError> {
+    fn is_key_pressed(&self, key: u8) -> bool {
         if key as usize >= KEYPAD_SIZE {
-            return Err(RuntimeError::KeypadIndexOutOfRange(key as usize));
+            return false;
         }
-        Ok(self.keypad[key as usize])
+        self.keypad[key as usize]
     }
 
     fn get_memory_byte(&self, address: usize) -> Result<u8, RuntimeError> {
@@ -194,13 +193,13 @@ impl Processor {
         Some(&mut self.display[x + y * SCREEN_WIDTH])
     }
 
-    pub fn fetch(&mut self) -> u16 {
-        let upper = self.memory[(self.pc) as usize];
-        let lower = self.memory[(self.pc + 1) as usize];
+    pub fn fetch(&mut self) -> Result<u16, RuntimeError> {
+        let upper = self.get_memory_byte(self.pc as usize)?;
+        let lower = self.get_memory_byte((self.pc + 1) as usize)?;
 
         self.advance_pc();
 
-        (upper as u16) << 8 | lower as u16
+        Ok((upper as u16) << 8 | lower as u16)
     }
 
     pub fn decode(instruction: u16) -> Instruction {
@@ -332,6 +331,7 @@ impl Processor {
     }
 
     pub fn instruction_cls(&mut self) -> Result<(), RuntimeError> {
+        self.is_dirty = true;
         self.display.fill(false);
         Ok(())
     }
@@ -502,11 +502,11 @@ impl Processor {
     }
 
     pub fn instruction_drw(&mut self, x: usize, y: usize, n: u8) -> Result<(), RuntimeError> {
-        *self.get_register_mut(0xF)? = 0; // Reset collision register
-
         // Wrap for initial coordinates
         let vx = self.get_register(x)? as usize % SCREEN_WIDTH;
         let vy = self.get_register(y)? as usize % SCREEN_HEIGHT;
+
+        *self.get_register_mut(0xF)? = 0; // Reset collision register
 
         for row in 0..n as usize {
             // Load first byte (row) of a sprite (e.g **** | 11110000 | 0xF0)
@@ -538,7 +538,8 @@ impl Processor {
     }
 
     pub fn instruction_skp(&mut self, x: usize) -> Result<(), RuntimeError> {
-        if self.is_key_pressed(self.get_register(x)?)? {
+        let key = self.get_register(x)?;
+        if self.is_key_pressed(key) {
             self.advance_pc();
         }
 
@@ -546,7 +547,8 @@ impl Processor {
     }
 
     pub fn instruction_sknp(&mut self, x: usize) -> Result<(), RuntimeError> {
-        if !self.is_key_pressed(self.get_register(x)?)? {
+        let key = self.get_register(x)?;
+        if !self.is_key_pressed(key) {
             self.advance_pc();
         }
 
@@ -584,7 +586,7 @@ impl Processor {
     }
 
     pub fn instruction_addi(&mut self, x: usize) -> Result<(), RuntimeError> {
-        self.memory_pointer += self.get_register(x)? as u16;
+        self.memory_pointer = self.memory_pointer.wrapping_add(self.get_register(x)? as u16);
 
         Ok(())
     }
@@ -625,7 +627,7 @@ impl Processor {
     }
 
     pub fn step(&mut self) -> Result<(), RuntimeError> {
-        let opcode = self.fetch();
+        let opcode = self.fetch()?;
         let instruction = Self::decode(opcode);
         self.execute(instruction)
     }
@@ -668,8 +670,8 @@ mod processor_tests {
     fn fetch_works1() {
         let program = vec![0x00, 0xE0, 0x6F, 0x12];
         let mut proc = create_processor_with_ram_filled(program.clone());
-        assert_eq!(proc.fetch(), 0x00E0);
-        assert_eq!(proc.fetch(), 0x6F12);
+        assert_eq!(proc.fetch().unwrap(), 0x00E0);
+        assert_eq!(proc.fetch().unwrap(), 0x6F12);
     }
 
     #[test]
@@ -677,7 +679,17 @@ mod processor_tests {
         let program = vec![];
         let mut proc = create_processor_with_ram_filled(program.clone());
 
-        assert_eq!(proc.fetch(), 0x0000);
+        assert_eq!(proc.fetch().unwrap(), 0x0000);
+    }
+
+    #[test]
+    fn fetch_err_out_of_range() {
+        let mut proc = create_processor_with_ram_filled(vec![]);
+        proc.pc = RAM_SIZE as u16 - 1;
+        assert!(matches!(
+            proc.fetch(),
+            Err(RuntimeError::MemoryIndexOutOfRange(_))
+        ));
     }
 
     #[test]
@@ -1119,6 +1131,10 @@ mod processor_tests {
         proc.keypad[0xF] = true;
         assert!(proc.instruction_skp(0x0).is_ok());
         assert_eq!(proc.pc, ROM_START_ADDRESS + 2);
+
+        *proc.get_register_mut(0x0).unwrap() = 0xFF;
+        assert!(proc.instruction_skp(0x0).is_ok());
+        assert_eq!(proc.pc, ROM_START_ADDRESS + 2);
     }
 
     #[test]
@@ -1134,6 +1150,10 @@ mod processor_tests {
         proc.keypad[0xF] = false;
         assert!(proc.instruction_sknp(0x0).is_ok());
         assert_eq!(proc.pc, ROM_START_ADDRESS + 2);
+
+        *proc.get_register_mut(0x0).unwrap() = 0xFF;
+        assert!(proc.instruction_sknp(0x0).is_ok());
+        assert_eq!(proc.pc, ROM_START_ADDRESS + 4);
     }
 
     #[test]
@@ -1151,18 +1171,15 @@ mod processor_tests {
     fn is_key_pressed() {
         let mut proc = create_processor_with_ram_filled(vec![]);
 
-        assert!(matches!(proc.is_key_pressed(0x0), Ok(false)));
-        assert!(matches!(proc.is_key_pressed(0xF), Ok(false)));
+        assert!(!proc.is_key_pressed(0x0));
+        assert!(!proc.is_key_pressed(0xF));
 
         proc.keypad[0x0] = true;
         proc.keypad[0xF] = true;
-        assert!(matches!(proc.is_key_pressed(0x0), Ok(true)));
-        assert!(matches!(proc.is_key_pressed(0xF), Ok(true)));
+        assert!(proc.is_key_pressed(0x0));
+        assert!(proc.is_key_pressed(0xF));
 
-        assert!(matches!(
-            proc.is_key_pressed(0xFF),
-            Err(RuntimeError::KeypadIndexOutOfRange(0xFF))
-        ));
+        assert!(!proc.is_key_pressed(0xFF));
     }
 
     #[test]
@@ -1216,6 +1233,11 @@ mod processor_tests {
 
         assert!(proc.instruction_addi(0x0).is_ok());
         assert_eq!(proc.memory_pointer, 0x80);
+
+        proc.memory_pointer = 0xFFFF;
+        *proc.get_register_mut(0x0).unwrap() = 1;
+        assert!(proc.instruction_addi(0x0).is_ok());
+        assert_eq!(proc.memory_pointer, 0);
     }
 
     #[test]

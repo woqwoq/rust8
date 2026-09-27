@@ -62,14 +62,14 @@ impl Emulator {
                 self.processor.step()?;
             }
 
-            // Tick timer at 60hz/FPS
-            self.processor.tick_timers();
-
             if self.processor.should_beep() {
                 self.speaker.play();
             } else {
                 self.speaker.pause();
             }
+
+            // Tick timer at 60hz/FPS
+            self.processor.tick_timers();
 
             // Redraw only when pixels are dirty
             if self.processor.is_dirty {
