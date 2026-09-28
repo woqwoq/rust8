@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::constants::{
     FONT, FONT_START_ADDRESS, KEYPAD_SIZE, RAM_SIZE, REGISTER_COUNT, ROM_START_ADDRESS,
     SCREEN_HEIGHT, SCREEN_WIDTH, SPRITE_SIZE, STACK_SIZE,
@@ -25,6 +27,37 @@ pub enum RuntimeError {
     StackOverflow(usize),
     StackUnderflow(usize),
 }
+
+impl fmt::Display for RuntimeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RuntimeError::UnknownInstruction => write!(f, "unknown or unsupported instruction"),
+            RuntimeError::RegisterIndexOutOfRange(x) => {
+                write!(f, "register index {x} out of range (expected V0 - VF)")
+            }
+            RuntimeError::MemoryIndexOutOfRange(addr) => {
+                write!(
+                    f,
+                    "memory address 0x{addr:04X} out of range (limit is 0x{RAM_SIZE:04X})"
+                )
+            }
+            RuntimeError::StackOverflow(pc) => {
+                write!(
+                    f,
+                    "stack overflow at PC 0x{pc:04X} (stack size is {STACK_SIZE})"
+                )
+            }
+            RuntimeError::StackUnderflow(pc) => {
+                write!(
+                    f,
+                    "stack underflow at PC 0x{pc:04X} (cannot return from empty stack)"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for RuntimeError {}
 
 #[derive(Clone, Debug, PartialEq)]
 #[allow(clippy::upper_case_acronyms)]
@@ -193,7 +226,7 @@ impl Processor {
         Some(&mut self.display[x + y * SCREEN_WIDTH])
     }
 
-    pub fn fetch(&mut self) -> Result<u16, RuntimeError> {
+    fn fetch(&mut self) -> Result<u16, RuntimeError> {
         let upper = self.get_memory_byte(self.pc as usize)?;
         let lower = self.get_memory_byte((self.pc + 1) as usize)?;
 
@@ -202,7 +235,7 @@ impl Processor {
         Ok((upper as u16) << 8 | lower as u16)
     }
 
-    pub fn decode(instruction: u16) -> Instruction {
+    fn decode(instruction: u16) -> Instruction {
         let n = (instruction & 0x000F) as u8;
         let nn = (instruction & 0x00FF) as u8;
         let nnn = instruction & 0x0FFF;
@@ -290,7 +323,7 @@ impl Processor {
         }
     }
 
-    pub fn execute(&mut self, instruction: Instruction) -> Result<(), RuntimeError> {
+    fn execute(&mut self, instruction: Instruction) -> Result<(), RuntimeError> {
         match instruction {
             Instruction::CLS => self.instruction_cls(), // 00E0 - Clear screen
             Instruction::RET => self.instruction_ret(), // 00EE - Return from subroutine
@@ -330,29 +363,29 @@ impl Processor {
         }
     }
 
-    pub fn instruction_cls(&mut self) -> Result<(), RuntimeError> {
+    fn instruction_cls(&mut self) -> Result<(), RuntimeError> {
         self.is_dirty = true;
         self.display.fill(false);
         Ok(())
     }
 
-    pub fn instruction_ret(&mut self) -> Result<(), RuntimeError> {
+    fn instruction_ret(&mut self) -> Result<(), RuntimeError> {
         self.pc = self.pop_from_stack()?;
         Ok(())
     }
 
-    pub fn instruction_jp(&mut self, nnn: u16) -> Result<(), RuntimeError> {
+    fn instruction_jp(&mut self, nnn: u16) -> Result<(), RuntimeError> {
         self.pc = nnn;
         Ok(())
     }
 
-    pub fn instruction_call(&mut self, nnn: u16) -> Result<(), RuntimeError> {
+    fn instruction_call(&mut self, nnn: u16) -> Result<(), RuntimeError> {
         self.push_to_stack(self.pc)?;
         self.pc = nnn;
         Ok(())
     }
 
-    pub fn instruction_se(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
+    fn instruction_se(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
         if self.get_register(x)? == nn {
             self.advance_pc();
         }
@@ -360,7 +393,7 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_sne(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
+    fn instruction_sne(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
         if self.get_register(x)? != nn {
             self.advance_pc();
         }
@@ -368,7 +401,7 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_sre(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
+    fn instruction_sre(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
         if self.get_register(x)? == self.get_register(y)? {
             self.advance_pc();
         }
@@ -376,25 +409,25 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_ld(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
+    fn instruction_ld(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
         *self.get_register_mut(x)? = nn;
 
         Ok(())
     }
 
-    pub fn instruction_add(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
+    fn instruction_add(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
         *self.get_register_mut(x)? = self.get_register(x)?.wrapping_add(nn);
 
         Ok(())
     }
 
-    pub fn instruction_ldr(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
+    fn instruction_ldr(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
         *self.get_register_mut(x)? = self.get_register(y)?;
 
         Ok(())
     }
 
-    pub fn instruction_or(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
+    fn instruction_or(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
         let vx = self.get_register(x)?;
         let vy = self.get_register(y)?;
 
@@ -403,7 +436,7 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_and(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
+    fn instruction_and(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
         let vx = self.get_register(x)?;
         let vy = self.get_register(y)?;
 
@@ -412,7 +445,7 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_xor(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
+    fn instruction_xor(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
         let vx = self.get_register(x)?;
         let vy = self.get_register(y)?;
 
@@ -421,7 +454,7 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_addr(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
+    fn instruction_addr(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
         let vx = self.get_register(x)?;
         let vy = self.get_register(y)?;
 
@@ -433,7 +466,7 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_subr(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
+    fn instruction_subr(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
         let vx = self.get_register(x)?;
         let vy = self.get_register(y)?;
 
@@ -445,7 +478,7 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_shr(&mut self, x: usize) -> Result<(), RuntimeError> {
+    fn instruction_shr(&mut self, x: usize) -> Result<(), RuntimeError> {
         let vx = self.get_register(x)?;
 
         *self.get_register_mut(x)? = vx >> 1;
@@ -454,7 +487,7 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_subrn(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
+    fn instruction_subrn(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
         let vx = self.get_register(x)?;
         let vy = self.get_register(y)?;
 
@@ -466,7 +499,7 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_shl(&mut self, x: usize) -> Result<(), RuntimeError> {
+    fn instruction_shl(&mut self, x: usize) -> Result<(), RuntimeError> {
         let vx = self.get_register(x)?;
 
         *self.get_register_mut(x)? = vx << 1;
@@ -475,7 +508,7 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_sner(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
+    fn instruction_sner(&mut self, x: usize, y: usize) -> Result<(), RuntimeError> {
         if self.get_register(x)? != self.get_register(y)? {
             self.advance_pc();
         }
@@ -483,25 +516,25 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_ldi(&mut self, nnn: u16) -> Result<(), RuntimeError> {
+    fn instruction_ldi(&mut self, nnn: u16) -> Result<(), RuntimeError> {
         self.memory_pointer = nnn;
 
         Ok(())
     }
 
-    pub fn instruction_jpr(&mut self, nnn: u16) -> Result<(), RuntimeError> {
+    fn instruction_jpr(&mut self, nnn: u16) -> Result<(), RuntimeError> {
         self.pc = self.get_register(0x0)? as u16 + nnn;
 
         Ok(())
     }
 
-    pub fn instruction_rnd(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
+    fn instruction_rnd(&mut self, x: usize, nn: u8) -> Result<(), RuntimeError> {
         *self.get_register_mut(x)? = rand::random::<u8>() & nn;
 
         Ok(())
     }
 
-    pub fn instruction_drw(&mut self, x: usize, y: usize, n: u8) -> Result<(), RuntimeError> {
+    fn instruction_drw(&mut self, x: usize, y: usize, n: u8) -> Result<(), RuntimeError> {
         // Wrap for initial coordinates
         let vx = self.get_register(x)? as usize % SCREEN_WIDTH;
         let vy = self.get_register(y)? as usize % SCREEN_HEIGHT;
@@ -537,7 +570,7 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_skp(&mut self, x: usize) -> Result<(), RuntimeError> {
+    fn instruction_skp(&mut self, x: usize) -> Result<(), RuntimeError> {
         let key = self.get_register(x)?;
         if self.is_key_pressed(key) {
             self.advance_pc();
@@ -546,7 +579,7 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_sknp(&mut self, x: usize) -> Result<(), RuntimeError> {
+    fn instruction_sknp(&mut self, x: usize) -> Result<(), RuntimeError> {
         let key = self.get_register(x)?;
         if !self.is_key_pressed(key) {
             self.advance_pc();
@@ -555,13 +588,13 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_lddt(&mut self, x: usize) -> Result<(), RuntimeError> {
+    fn instruction_lddt(&mut self, x: usize) -> Result<(), RuntimeError> {
         *self.get_register_mut(x)? = self.delay_timer;
 
         Ok(())
     }
 
-    pub fn instruction_ldk(&mut self, x: usize) -> Result<(), RuntimeError> {
+    fn instruction_ldk(&mut self, x: usize) -> Result<(), RuntimeError> {
         let _ = self.get_register(x)?; // fail-fast when register is out of range
 
         if let Some(v) = self.keypad.iter().position(|&pressed| pressed) {
@@ -573,25 +606,27 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_lddtr(&mut self, x: usize) -> Result<(), RuntimeError> {
+    fn instruction_lddtr(&mut self, x: usize) -> Result<(), RuntimeError> {
         self.delay_timer = self.get_register(x)?;
 
         Ok(())
     }
 
-    pub fn instruction_ldst(&mut self, x: usize) -> Result<(), RuntimeError> {
+    fn instruction_ldst(&mut self, x: usize) -> Result<(), RuntimeError> {
         self.sound_timer = self.get_register(x)?;
 
         Ok(())
     }
 
-    pub fn instruction_addi(&mut self, x: usize) -> Result<(), RuntimeError> {
-        self.memory_pointer = self.memory_pointer.wrapping_add(self.get_register(x)? as u16);
+    fn instruction_addi(&mut self, x: usize) -> Result<(), RuntimeError> {
+        self.memory_pointer = self
+            .memory_pointer
+            .wrapping_add(self.get_register(x)? as u16);
 
         Ok(())
     }
 
-    pub fn instruction_lds(&mut self, x: usize) -> Result<(), RuntimeError> {
+    fn instruction_lds(&mut self, x: usize) -> Result<(), RuntimeError> {
         let vx = self.get_register(x)? as u16 & 0x0F;
 
         self.memory_pointer = FONT_START_ADDRESS + (SPRITE_SIZE * vx);
@@ -599,7 +634,7 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_ldb(&mut self, x: usize) -> Result<(), RuntimeError> {
+    fn instruction_ldb(&mut self, x: usize) -> Result<(), RuntimeError> {
         let vx = self.get_register(x)?;
         let i = self.memory_pointer as usize;
 
@@ -610,7 +645,7 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_ldrm(&mut self, x: usize) -> Result<(), RuntimeError> {
+    fn instruction_ldrm(&mut self, x: usize) -> Result<(), RuntimeError> {
         for i in 0..=x {
             *self.get_memory_byte_mut(i + self.memory_pointer as usize)? = self.get_register(i)?;
         }
@@ -618,7 +653,7 @@ impl Processor {
         Ok(())
     }
 
-    pub fn instruction_ldmr(&mut self, x: usize) -> Result<(), RuntimeError> {
+    fn instruction_ldmr(&mut self, x: usize) -> Result<(), RuntimeError> {
         for i in 0..=x {
             *self.get_register_mut(i)? = self.get_memory_byte(i + self.memory_pointer as usize)?;
         }
@@ -1385,5 +1420,29 @@ mod processor_tests {
         for i in 0..REGISTER_COUNT as u8 {
             assert_eq!(*proc.get_register_mut(i as usize).unwrap(), i);
         }
+    }
+
+    #[test]
+    fn runtime_error_display() {
+        assert_eq!(
+            RuntimeError::UnknownInstruction.to_string(),
+            "unknown or unsupported instruction"
+        );
+        assert_eq!(
+            RuntimeError::RegisterIndexOutOfRange(16).to_string(),
+            "register index 16 out of range (expected V0 - VF)"
+        );
+        assert_eq!(
+            RuntimeError::MemoryIndexOutOfRange(0x1000).to_string(),
+            "memory address 0x1000 out of range (limit is 0x1000)"
+        );
+        assert_eq!(
+            RuntimeError::StackOverflow(0x200).to_string(),
+            "stack overflow at PC 0x0200 (stack size is 16)"
+        );
+        assert_eq!(
+            RuntimeError::StackUnderflow(0x200).to_string(),
+            "stack underflow at PC 0x0200 (cannot return from empty stack)"
+        );
     }
 }

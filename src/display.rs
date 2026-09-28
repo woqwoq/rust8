@@ -1,3 +1,5 @@
+use std::fmt;
+
 use minifb::{Key, Window, WindowOptions};
 
 use crate::constants::{KEYPAD_TRACKED_KEYS, SCREEN_HEIGHT, SCREEN_WIDTH};
@@ -12,6 +14,23 @@ pub enum DisplayError {
     DrawPixelOutOfRange(usize),
     UpdateFrameBuffer,
 }
+
+impl fmt::Display for DisplayError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DisplayError::DrawPixelOutOfRange(len) => {
+                write!(
+                    f,
+                    "draw buffer length {len} exceeds display capacity of {}",
+                    SCREEN_WIDTH * SCREEN_HEIGHT
+                )
+            }
+            DisplayError::UpdateFrameBuffer => write!(f, "failed to update window framebuffer"),
+        }
+    }
+}
+
+impl std::error::Error for DisplayError {}
 
 impl Display {
     pub fn new() -> Self {

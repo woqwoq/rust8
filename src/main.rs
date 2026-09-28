@@ -1,7 +1,6 @@
-use std::path::PathBuf;
+use crate::cli::CliRunner;
 
-use crate::emulator::Emulator;
-
+mod cli;
 mod constants;
 mod display;
 mod emulator;
@@ -9,9 +8,6 @@ mod processor;
 mod sound;
 
 fn main() {
-    let mut emu = Emulator::from_rom_file(PathBuf::from("src/example/Bowling.ch8")).unwrap();
-
-    if let Err(e) = emu.run() {
-        println!("{e:?}");
-    }
+    let runner = CliRunner::new();
+    runner.run();
 }
