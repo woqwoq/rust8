@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{fmt, path::PathBuf};
 
 use minifb::Key;
 
@@ -19,6 +19,26 @@ pub enum EmulatorError {
     Display(DisplayError),
     Processor(RuntimeError),
     RomOpen,
+}
+
+impl fmt::Display for EmulatorError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EmulatorError::Display(e) => write!(f, "display error: {e}"),
+            EmulatorError::Processor(e) => write!(f, "processor error: {e}"),
+            EmulatorError::RomOpen => write!(f, "failed to open or read ROM file"),
+        }
+    }
+}
+
+impl std::error::Error for EmulatorError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            EmulatorError::Display(e) => Some(e),
+            EmulatorError::Processor(e) => Some(e),
+            EmulatorError::RomOpen => None,
+        }
+    }
 }
 
 impl From<RuntimeError> for EmulatorError {
