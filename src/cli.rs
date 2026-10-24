@@ -5,7 +5,7 @@ use clap::Parser;
 use crate::emulator::{Emulator, EmulatorError};
 
 #[derive(Parser)]
-#[command(about = "A portalble CHIP8 Emulator written in Rust.")]
+#[command(about = "A portable CHIP8 Emulator written in Rust.")]
 pub struct Cli {
     /// Path to ROM file
     #[arg(short, long, value_name = "FILE")]
